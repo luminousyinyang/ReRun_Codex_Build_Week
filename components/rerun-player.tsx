@@ -22,6 +22,7 @@ export function ReRunPlayer() {
   const [captions, setCaptions] = useState(true);
   const [muted, setMuted] = useState(false);
   const [paused, setPaused] = useState(false);
+  const [answeringOption, setAnsweringOption] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [liveLoading, setLiveLoading] = useState(false);
 
@@ -62,6 +63,7 @@ export function ReRunPlayer() {
     setRecapFeedback("");
     setRatings([]);
     setRewindLevel(0);
+    setAnsweringOption(null);
     setScreen("recap");
     setNotice("Demo course loaded. No API key required.");
   }
@@ -83,6 +85,7 @@ export function ReRunPlayer() {
       setRecapFeedback("");
       setRatings([]);
       setRewindLevel(0);
+      setAnsweringOption(null);
       setScreen("recap");
       setNotice("Your notes are now on air.");
     } catch (error) {
@@ -102,6 +105,7 @@ export function ReRunPlayer() {
     setSceneId(scene.next ?? "s1");
     setScreen("episode");
     setNotice("");
+    setAnsweringOption(null);
   }
 
   function advance() {
@@ -134,13 +138,15 @@ export function ReRunPlayer() {
 
   function choose(optionId: string) {
     const option = scene.beat?.options.find((candidate) => candidate.id === optionId);
-    if (!option || !scene.beat) return;
+    if (!option || !scene.beat || answeringOption) return;
+    setAnsweringOption(optionId);
     setRatings((current) => [...current.slice(-9), option.isCorrect]);
     setNotice(option.isCorrect ? "Applause! The show rolls on." : "The show follows that logic for one beat...");
     window.setTimeout(() => {
       setSceneId(option.isCorrect ? scene.beat!.onCorrect : scene.beat!.onIncorrect);
       setRewindLevel(0);
       setPaused(false);
+      setAnsweringOption(null);
     }, option.isCorrect ? 420 : 520);
   }
 
@@ -170,7 +176,7 @@ export function ReRunPlayer() {
             {screen === "ingest" && <div className="ingest-screen"><ScreenHeader right="NO SIGNAL - REC" /><div className="ingest-body"><p className="eyebrow">CH 00</p><h1>Feed me your material.</h1><textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Paste short study notes here..." aria-label="Study notes" /><div className="ingest-actions"><button onClick={loadDemo} className="secondary">Load demo course</button><button onClick={generateEpisode} disabled={liveLoading} className="primary">{liveLoading ? "ON AIR..." : "Generate episode"}</button></div><p className="quiet">Live generation is optional. The demo needs no API key.</p></div></div>}
             {screen === "standby" && <div className="screen-center standby-screen"><p>PLEASE STAND BY</p><span>TONIGHT&apos;S EPISODE IS IN PRODUCTION</span></div>}
             {screen === "recap" && <div className="recap-screen"><ScreenHeader right="PREVIOUSLY ON..." /><div className="recap-body"><p className="eyebrow">WARM-UP BEFORE WE ROLL TAPE</p><h2>{episode.title}</h2><label>{scene.recap?.[0]?.prompt}<input value={recap} onChange={(event) => setRecap(event.target.value)} placeholder="your answer" /></label>{recapFeedback && <p className="feedback">{recapFeedback}</p>}<div className="ingest-actions"><button className="secondary" onClick={checkRecap}>Check</button><button className="primary" onClick={startEpisode}>Now airing - CH 03</button></div></div></div>}
-            {screen === "episode" && <div className={`episode-screen ${paused ? "is-paused" : ""}`}><ScreenHeader right={isCommercial ? "COMMERCIAL BREAK" : "THE TOON BLOCK"} /><div className={`scene-art scene-${scene.type}`}><SceneIllustration scene={scene} /></div><div className={`scene-copy ${isOutcome ? "has-refutation" : ""}`}><p className="speaker">{scene.speaker}</p>{captions && <p className="caption">{visibleLine}</p>}{isOutcome && <p className="refutation">↺ {scene.refutation}</p>}</div>{paused && <aside className="deep-dive"><p>PAUSED - DEEP DIVE</p><strong>{scene.deepDive ?? "Stay with the current scene, then answer the next beat."}</strong><button onClick={() => setPaused(false)}>Resume show</button></aside>}{isBeat && !paused && <section className={`beat-card ${isCommercial ? "commercial" : ""}`}><p>{isCommercial ? "SKIP THIS AD - answer a review question" : "THE SHOW NEEDS YOU"}</p><h2>{scene.beat!.question}</h2><div className="options">{scene.beat!.options.map((option, index) => <button key={option.id} onClick={() => choose(option.id)}><span>{String.fromCharCode(65 + index)}</span>{option.text}</button>)}</div></section>}{!isBeat && !isCliffhanger && !paused && <button onClick={advance} className="continue">{isOutcome ? "Rewind & retry" : "Continue"} ▶</button>}{isCliffhanger && <section className="cliffhanger"><p>TO BE CONTINUED</p><h2>{episode.cliffhanger.teaser}</h2><span>Next episode airs in {episode.cliffhanger.airsAfterHours} hours</span><button onClick={() => setScreen("guide")}>See TV guide</button></section>}</div>}
+            {screen === "episode" && <div className={`episode-screen ${paused ? "is-paused" : ""} ${isBeat && !paused ? "has-question" : ""} ${answeringOption ? "is-answering" : ""}`}><ScreenHeader right={isCommercial ? "COMMERCIAL BREAK" : "THE TOON BLOCK"} /><div className={`scene-art scene-${scene.type}`}><SceneIllustration scene={scene} /></div><div className={`scene-copy ${isOutcome ? "has-refutation" : ""}`}><p className="speaker">{scene.speaker}</p>{captions && <p className="caption">{visibleLine}</p>}{isOutcome && <p className="refutation">↺ {scene.refutation}</p>}</div>{paused && <aside className="deep-dive"><p>PAUSED - DEEP DIVE</p><strong>{scene.deepDive ?? "Stay with the current scene, then answer the next beat."}</strong><button onClick={() => setPaused(false)}>Resume show</button></aside>}{isBeat && !paused && <><div className="question-wash" aria-hidden="true" /><section className={`beat-card ${isCommercial ? "commercial" : ""}`} role="dialog" aria-modal="true" aria-labelledby={`question-${scene.id}`}><p>{isCommercial ? "SKIP THIS AD - answer a review question" : "SIGNAL LOCKED — THE SHOW NEEDS YOU"}</p><h2 id={`question-${scene.id}`}>{scene.beat!.question}</h2><div className="options">{scene.beat!.options.map((option, index) => <button key={option.id} autoFocus={index === 0} className={answeringOption === option.id ? "is-selected" : ""} disabled={Boolean(answeringOption)} onClick={() => choose(option.id)}><span>{String.fromCharCode(65 + index)}</span><b>{option.text}</b>{answeringOption === option.id && <em>LOCKED IN</em>}</button>)}</div></section></>}{!isBeat && !isCliffhanger && !paused && <button onClick={advance} className="continue">{isOutcome ? "Rewind & retry" : "Continue"} ▶</button>}{isCliffhanger && <section className="cliffhanger"><p>TO BE CONTINUED</p><h2>{episode.cliffhanger.teaser}</h2><span>Next episode airs in {episode.cliffhanger.airsAfterHours} hours</span><button onClick={() => setScreen("guide")}>See TV guide</button></section>}</div>}
             {screen === "guide" && <div className="guide-screen"><ScreenHeader right="SPACED REVIEW LINEUP" /><div className="guide-body"><p className="eyebrow">TV GUIDE</p><h2>Next on ReRun</h2><div className="guide-row"><b>CH 03</b><span>{episode.title}</span><i>WATCHED</i></div><div className="guide-row"><b>CH 03</b><span>{episode.cliffhanger.teaser}</span><i>+{episode.cliffhanger.airsAfterHours}h</i></div><div className="guide-row locked"><b>CH 07</b><span>The Buzz-In</span><i>COMING SOON</i></div><button className="primary" onClick={loadDemo}>Watch again</button></div></div>}
             {notice && <p className="notice" role="status">{notice}</p>}
           </div>

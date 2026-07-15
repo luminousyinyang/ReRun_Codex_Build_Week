@@ -4,6 +4,12 @@
 
 ReRun makes the learner a necessary cast member in an educational TV show. The episode cannot progress until they retrieve, choose, or explain the relevant idea.
 
+## Format thesis
+
+AI study podcasts can turn notes into an audio-first review experience. ReRun addresses the complementary visual, interactive gap: it turns source material into a television episode where a learner sees ideas in context, participates in the plot, and receives a narrative consequence or simpler re-explanation.
+
+ReRun is not a passive video generator and does not claim that visual study is superior for every learner. Its P0 promise is narrower and demonstrable: active retrieval, accurate corrective feedback, and adaptive re-explanation inside an original visual narrative.
+
 ## Audience
 
 - **Primary:** students age 13+ and adult self-learners preparing for an assessment.

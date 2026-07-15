@@ -33,7 +33,7 @@ All mutation-like routes enforce input limits, server-side secret access, struct
 1. **Curriculum parser:** source text to a small `ConceptGraph` of objectives, facts, prerequisites, and misconceptions.
 2. **Showrunner:** graph slice plus difficulty and channel to `EpisodeSpec` JSON through structured output.
 3. **Validator:** Zod parses output; one constrained repair attempt may fix schema defects.
-4. **Assets:** the P0 fixture references bundled, original scene art in `public/assets/scenes/` and optional motion layers in `public/assets/motion/`; no media-generation request is needed during a demo. A scene may provide `visualAsset`; when it does not, the renderer chooses a local scene-type fallback. Motion-ready scenes compose a clean plate with transparent character poses and CSS-only atmosphere. Future asset jobs may cache stable character references and scene art by content hash, but they must never block playback.
+4. **Assets:** the P0 fixture references bundled, original scene art in `public/assets/scenes-v2/` and optional motion layers in `public/assets/motion/`; no media-generation request is needed during a demo. A scene may provide `visualAsset`; when it does not, the renderer chooses a local scene-type fallback. Motion-ready scenes compose a clean plate with transparent character poses and CSS-only atmosphere. Future asset jobs may cache stable character references and scene art by content hash, but they must never block playback or leave a learner waiting for an image to render.
 5. **Broadcast:** player begins only from a fully validated fixture/spec.
 
 ## Storage and reliability

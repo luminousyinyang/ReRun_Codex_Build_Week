@@ -6,6 +6,12 @@ ReRun is being built for the **OpenAI Build Week 2026 - Education** category. It
 
 > Status: P0 is runnable: a Next.js 15, TypeScript, OpenAI SDK application with a deterministic interactive demo and optional GPT-5.6 episode generation for short pasted notes.
 
+## The missing visual layer
+
+AI study podcasts can make material easier to listen to. ReRun is their visual, interactive complement: it turns source material into a television episode where learners see a concept in context, answer to keep the plot moving, and encounter a visible consequence or simpler re-explanation when needed.
+
+It is not a passive video generator, and it does not claim that a visual format is best for every learner. The demonstrated value is an active learning loop inside a deliberately visual narrative.
+
 ## Why ReRun
 
 The product's learning loop is deliberately active:
@@ -48,7 +54,7 @@ The renderer owns presentation and navigation. The model may author validated co
 - **Server:** ingest, structured episode generation, evaluation, rewind, call-in, and scheduling routes.
 - **Reliability:** Zod validation, one repair retry for generated structures, cached/bundled demo assets, and clear fallback states.
 
-The Photosynthesis demo includes a local, original four-scene visual pack. It plays without an image-generation request; new/live scenes use deterministic local visual fallbacks until an approved asset pipeline is available.
+The Photosynthesis demo includes a local, original four-scene animated-world visual pack. It plays without an image-generation request; new/live scenes use deterministic local visual fallbacks until an approved asset pipeline is available.
 
 The full contract is in [Architecture](docs/ARCHITECTURE.md) and [EpisodeSpec v1](docs/EPISODE_SPEC.md).
 

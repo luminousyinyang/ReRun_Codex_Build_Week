@@ -4,9 +4,9 @@
 
 Select **Education**. Use this concise, human-edited framing:
 
-> ReRun is an interactive retro-TV study app where the show cannot continue until the learner answers. It turns retrieval practice, corrective feedback, adaptive re-explanation, and review into TV mechanics: question beats, consequence scenes, rewinds, and commercials.
+> AI study podcasts make notes easier to listen to. ReRun is their visual, interactive complement: a retro-TV study app where the show cannot continue until the learner answers. It turns retrieval practice, corrective feedback, adaptive re-explanation, and review into TV mechanics: question beats, consequence scenes, rewinds, and commercials.
 
-Describe only the features that are visibly working. Do not describe P1/P2 items as shipped, make unsupported learning-outcome claims, or paste unedited model-generated copy.
+Describe only the features that are visibly working. Do not describe P1/P2 items as shipped, make unsupported learning-outcome claims, imply that visual study is best for every learner, or paste unedited model-generated copy.
 
 ## Required submission materials
 

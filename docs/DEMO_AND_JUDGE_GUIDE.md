@@ -13,6 +13,10 @@
 
 This path proves the core educational loop without an API key, login, pre-generated cloud asset, or live network dependency.
 
+## What the demo demonstrates
+
+Study podcasts are useful audio-first tools. This demo shows ReRun's complementary visual and interactive format: a concept is situated in a scene, a learner must answer to move the program forward, an incorrect answer receives a visible-but-kind consequence and correction, and rewind returns with a simpler explanation. The experience demonstrates an active learning loop, not a claim that a television format works better for every learner.
+
 ## Live mode
 
 Add `OPENAI_API_KEY` in `.env.local` only to try short pasted-note ingestion. Live mode is optional and must be labeled as such. It may reject unsupported, unsafe, empty, or oversized content. If a model call, schema check, asset fetch, or rate limit fails, the app must preserve a clear explanation and offer the bundled demo.
