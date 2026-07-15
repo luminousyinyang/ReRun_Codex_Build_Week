@@ -4,7 +4,7 @@
 
 ReRun is being built for the **OpenAI Build Week 2026 - Education** category. It is designed for high-school, college, and self-directed learners who want a more active alternative to passive study media.
 
-> Status: P0 is runnable: a Next.js 15, TypeScript, OpenAI SDK application with a deterministic interactive demo and optional GPT-5.6 episode generation for short pasted notes.
+> Status: the bundled demo is a voiced-show-ready, deterministic interactive experience: it performs timed host chatter and auto-play without credentials, while configured OpenAI routes add AI narration, live scene art, and original-show themes for pasted notes.
 
 ## The missing visual layer
 
@@ -51,10 +51,10 @@ The renderer owns presentation and navigation. The model may author validated co
 `notes/PDF text -> ConceptGraph -> EpisodeSpec -> deterministic CRT renderer`
 
 - **Client:** CRT shell, remote controls, subtitles, motion/audio preferences, and branching beat engine.
-- **Server:** ingest, structured episode generation, evaluation, rewind, call-in, and scheduling routes.
+- **Server:** structured episode generation, TTS narration, safe original-theme normalization, and streamed scene-art routes.
 - **Reliability:** Zod validation, one repair retry for generated structures, cached/bundled demo assets, and clear fallback states.
 
-The Photosynthesis demo includes a local, original four-scene animated-world visual pack. It plays without an image-generation request; new/live scenes use deterministic local visual fallbacks until an approved asset pipeline is available.
+The Photosynthesis demo includes a local, original animated-world visual pack and never needs an API key. Configured live episodes use a sanitized original theme, stream matching scene art without blocking playback, and retain the same deterministic fallback art if a request fails. Audio is AI-generated when configured and is disclosed in the player.
 
 The full contract is in [Architecture](docs/ARCHITECTURE.md) and [EpisodeSpec v1](docs/EPISODE_SPEC.md).
 

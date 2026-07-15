@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { defaultTheme, showThemeSchema } from "@/lib/theme";
 
 export const sceneTypes = ["recap", "narrative", "beat", "branch_outcome", "commercial", "cliffhanger"] as const;
 
@@ -17,7 +18,7 @@ const beatSchema = z.object({
   onIncorrect: z.string().min(1),
 });
 
-const sceneSchema = z.object({
+export const sceneSchema = z.object({
   id: z.string().min(1),
   type: z.enum(sceneTypes),
   background: z.string().min(1),
@@ -41,6 +42,7 @@ export const episodeBaseSchema = z.object({
   channel: z.literal(3),
   format: z.literal("toon"),
   difficulty: z.number().int().min(1).max(5),
+  theme: showThemeSchema.optional(),
   learningObjectives: z.array(z.object({ id: z.string(), conceptKey: z.string(), text: z.string() })).min(1),
   cast: z.array(z.object({ id: z.string(), name: z.string(), persona: z.string(), voice: z.string().optional(), spriteRef: z.string().optional() })).min(1),
   scenes: z.array(sceneSchema).min(1),
@@ -74,6 +76,7 @@ export const demoEpisode: EpisodeSpec = episodeSchema.parse({
   channel: 3,
   format: "toon",
   difficulty: 3,
+  theme: defaultTheme,
   learningObjectives: [
     { id: "lo-atp", conceptKey: "cell.atp", text: "Distinguish ATP from DNA and glucose." },
     { id: "lo-nadph", conceptKey: "photo.light-products", text: "Identify the electron carrier produced in light reactions." },
@@ -81,7 +84,7 @@ export const demoEpisode: EpisodeSpec = episodeSchema.parse({
   cast: [{ id: "prof-paws", name: "Professor Paws", persona: "warm, dramatic science host" }],
   scenes: [
     { id: "recap", type: "recap", background: "broadcast-blue test card", recap: [{ prompt: "The powerhouse of the cell is the ____.", answers: ["mitochondria"], conceptKey: "cell.organelles" }], next: "s1" },
-    { id: "s1", type: "narrative", background: "cartoon chloroplast exterior, neon-green heist lighting", visualAsset: "/assets/scenes-v2/sunlight-vault-v2.png", speaker: "Professor Paws", line: "Tonight, we crack the cell's sunlight vault. The first job happens in the light reactions.", deepDive: "Chloroplast thylakoid membranes hold the light-catching machinery.", next: "s2" },
+    { id: "s1", type: "narrative", background: "cartoon chloroplast exterior, neon-green heist lighting", visualAsset: "/assets/scenes-v3/sunlight-vault-v3.jpg", speaker: "Professor Paws", line: "Tonight, we crack the cell's sunlight vault. The first job happens in the light reactions.", deepDive: "Chloroplast thylakoid membranes hold the light-catching machinery.", next: "s2" },
     { id: "s2", type: "beat", background: "vault door marked energy currency", speaker: "Professor Paws", line: "Freeze. Which molecule is ready-to-spend cellular energy?", deepDive: "Cells use a small rechargeable energy carrier for immediate work.", beat: { kind: "mcq", question: "Which molecule carries usable energy for cell work?", options: [{ id: "atp", text: "ATP", isCorrect: true }, { id: "dna", text: "DNA", isCorrect: false, misconceptionKey: "information-vs-energy" }, { id: "glucose", text: "Glucose", isCorrect: false, misconceptionKey: "stored-fuel-vs-carrier" }], onCorrect: "s3", onIncorrect: "s2-outcome" } },
     { id: "s2-outcome", type: "branch_outcome", background: "vault alarm and safe paper blueprints", speaker: "Professor Paws", line: "Wrong wire. The blueprints are not the battery.", refutation: "DNA stores genetic information, glucose stores fuel, and ATP is the cell's immediately usable energy carrier.", next: "s2-variant" },
     { id: "s2-variant", type: "beat", background: "rewired vault, one amber cable", speaker: "Professor Paws", line: "Rewind: what does a cell spend directly?", beat: { kind: "mcq", question: "The cell's ready-to-spend energy currency is...", options: [{ id: "atp", text: "ATP", isCorrect: true }, { id: "dna", text: "DNA", isCorrect: false, misconceptionKey: "information-vs-energy" }], onCorrect: "s3", onIncorrect: "s2-variant" } },
@@ -89,8 +92,8 @@ export const demoEpisode: EpisodeSpec = episodeSchema.parse({
     { id: "s4", type: "beat", background: "two glowing getaway canisters", speaker: "Professor Paws", line: "What is the other energy carrier?", beat: { kind: "mcq", question: "Besides ATP, light reactions produce which electron carrier?", options: [{ id: "nadph", text: "NADPH", isCorrect: true }, { id: "oxygen", text: "Oxygen", isCorrect: false, misconceptionKey: "byproduct-vs-carrier" }, { id: "co2", text: "Carbon dioxide", isCorrect: false, misconceptionKey: "reactant-vs-product" }], onCorrect: "commercial", onIncorrect: "s4-outcome" } },
     { id: "s4-outcome", type: "branch_outcome", background: "oxygen bubbles drift from a broken canister", speaker: "Professor Paws", line: "Oxygen exits as a by-product; it is not the carrier we bank.", refutation: "Splitting water releases oxygen. NADPH carries energized electrons onward, while carbon dioxide is used later in the Calvin cycle.", next: "s4-variant" },
     { id: "s4-variant", type: "beat", background: "canister label highlighted", speaker: "Professor Paws", line: "One more take: which carrier transports energized electrons?", beat: { kind: "mcq", question: "The light reactions produce ATP and...", options: [{ id: "nadph", text: "NADPH", isCorrect: true }, { id: "oxygen", text: "Oxygen", isCorrect: false, misconceptionKey: "byproduct-vs-carrier" }], onCorrect: "commercial", onIncorrect: "s4-variant" } },
-    { id: "commercial", type: "commercial", background: "retro power-company ad", visualAsset: "/assets/scenes-v2/review-break-v2.png", speaker: "Professor Paws", line: "Commercial break. Answer a review question to skip.", beat: { kind: "mcq", question: "Which organelle makes most ATP in cellular respiration?", options: [{ id: "mitochondria", text: "Mitochondria", isCorrect: true }, { id: "nucleus", text: "Nucleus", isCorrect: false, misconceptionKey: "organelle-function" }], onCorrect: "cliffhanger", onIncorrect: "commercial" } },
-    { id: "cliffhanger", type: "cliffhanger", background: "storm over the Calvin Cycle district", visualAsset: "/assets/scenes-v2/calvin-storm-v2.png", speaker: "Professor Paws", line: "We got ATP and NADPH, but the Calvin Cycle is waiting.", next: null },
+    { id: "commercial", type: "commercial", background: "retro power-company ad", visualAsset: "/assets/scenes-v3/review-break-v3.jpg", speaker: "Professor Paws", line: "Commercial break. Answer a review question to skip.", beat: { kind: "mcq", question: "Which organelle makes most ATP in cellular respiration?", options: [{ id: "mitochondria", text: "Mitochondria", isCorrect: true }, { id: "nucleus", text: "Nucleus", isCorrect: false, misconceptionKey: "organelle-function" }], onCorrect: "cliffhanger", onIncorrect: "commercial" } },
+    { id: "cliffhanger", type: "cliffhanger", background: "storm over the Calvin Cycle district", visualAsset: "/assets/scenes-v3/calvin-storm-v3.jpg", speaker: "Professor Paws", line: "We got ATP and NADPH, but the Calvin Cycle is waiting.", next: null },
   ],
   cliffhanger: { teaser: "Next: the Calvin Cycle Caper.", airsAfterHours: 24 },
 });

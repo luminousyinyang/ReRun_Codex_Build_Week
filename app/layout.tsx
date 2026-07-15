@@ -17,7 +17,15 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>{children}<svg width="0" height="0" aria-hidden="true" focusable="false">
+        <filter id="rerun-posterize" colorInterpolationFilters="sRGB">
+          <feComponentTransfer>
+            <feFuncR type="discrete" tableValues="0 .27 .55 .8 1" />
+            <feFuncG type="discrete" tableValues="0 .3 .58 .82 1" />
+            <feFuncB type="discrete" tableValues="0 .34 .62 .84 1" />
+          </feComponentTransfer>
+        </filter>
+      </svg></body>
     </html>
   );
 }
