@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { demoEpisode, type EpisodeSpec, type Scene } from "@/lib/episode";
 import { SceneIllustration } from "@/components/scene-illustration";
 
-type Screen = "off" | "ingest" | "standby" | "recap" | "episode" | "guide";
+type Screen = "off" | "boot" | "static" | "ingest" | "standby" | "recap" | "episode" | "guide";
 
 function findScene(episode: EpisodeSpec, id: string) {
   return episode.scenes.find((scene) => scene.id === id) ?? episode.scenes[0];
@@ -30,13 +30,28 @@ export function ReRunPlayer() {
   const visibleLine = rewindLevel >= 2 && scene.simplerAgain ? scene.simplerAgain : rewindLevel >= 1 && scene.simpler ? scene.simpler : scene.line;
 
   useEffect(() => {
+    if (screen !== "boot") return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const timer = window.setTimeout(() => setScreen("static"), reduceMotion ? 0 : 200);
+    return () => window.clearTimeout(timer);
+  }, [screen]);
+
+  useEffect(() => {
+    if (screen !== "static") return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    playStaticBurst();
+    const timer = window.setTimeout(() => setScreen("ingest"), reduceMotion ? 0 : 360);
+    return () => window.clearTimeout(timer);
+  }, [screen, muted]);
+
+  useEffect(() => {
     if (screen !== "standby") return;
     const timer = window.setTimeout(() => setScreen("recap"), 850);
     return () => window.clearTimeout(timer);
   }, [screen]);
 
   function power() {
-    setScreen((current) => current === "off" ? "ingest" : "off");
+    setScreen((current) => current === "off" ? "boot" : "off");
     setNotice("");
   }
 
@@ -97,6 +112,26 @@ export function ReRunPlayer() {
     }
   }
 
+  function playStaticBurst() {
+    if (muted || typeof window === "undefined" || !window.AudioContext) return;
+    const context = new window.AudioContext();
+    const buffer = context.createBuffer(1, Math.floor(context.sampleRate * 0.24), context.sampleRate);
+    const samples = buffer.getChannelData(0);
+    for (let index = 0; index < samples.length; index += 1) samples[index] = Math.random() * 2 - 1;
+    const noise = context.createBufferSource();
+    const gain = context.createGain();
+    const filter = context.createBiquadFilter();
+    noise.buffer = buffer;
+    filter.type = "highpass";
+    filter.frequency.value = 780;
+    gain.gain.setValueAtTime(0.11, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.24);
+    noise.connect(filter).connect(gain).connect(context.destination);
+    noise.start();
+    noise.stop(context.currentTime + 0.24);
+    window.setTimeout(() => void context.close(), 320);
+  }
+
   function choose(optionId: string) {
     const option = scene.beat?.options.find((candidate) => candidate.id === optionId);
     if (!option || !scene.beat) return;
@@ -105,6 +140,7 @@ export function ReRunPlayer() {
     window.setTimeout(() => {
       setSceneId(option.isCorrect ? scene.beat!.onCorrect : scene.beat!.onIncorrect);
       setRewindLevel(0);
+      setPaused(false);
     }, option.isCorrect ? 420 : 520);
   }
 
@@ -129,6 +165,8 @@ export function ReRunPlayer() {
         <div className="tv-cabinet">
           <div className="tv-screen">
             {screen === "off" && <div className="screen-center off-screen"><p>Your notes are about to go on air</p><span className="power-light" /><span>PRESS POWER</span></div>}
+            {screen === "boot" && <div className="boot-screen" aria-label="Television powering on"><i className="boot-line" /></div>}
+            {screen === "static" && <div className="static-screen" aria-label="Broadcast signal tuning" />}
             {screen === "ingest" && <div className="ingest-screen"><ScreenHeader right="NO SIGNAL - REC" /><div className="ingest-body"><p className="eyebrow">CH 00</p><h1>Feed me your material.</h1><textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Paste short study notes here..." aria-label="Study notes" /><div className="ingest-actions"><button onClick={loadDemo} className="secondary">Load demo course</button><button onClick={generateEpisode} disabled={liveLoading} className="primary">{liveLoading ? "ON AIR..." : "Generate episode"}</button></div><p className="quiet">Live generation is optional. The demo needs no API key.</p></div></div>}
             {screen === "standby" && <div className="screen-center standby-screen"><p>PLEASE STAND BY</p><span>TONIGHT&apos;S EPISODE IS IN PRODUCTION</span></div>}
             {screen === "recap" && <div className="recap-screen"><ScreenHeader right="PREVIOUSLY ON..." /><div className="recap-body"><p className="eyebrow">WARM-UP BEFORE WE ROLL TAPE</p><h2>{episode.title}</h2><label>{scene.recap?.[0]?.prompt}<input value={recap} onChange={(event) => setRecap(event.target.value)} placeholder="your answer" /></label>{recapFeedback && <p className="feedback">{recapFeedback}</p>}<div className="ingest-actions"><button className="secondary" onClick={checkRecap}>Check</button><button className="primary" onClick={startEpisode}>Now airing - CH 03</button></div></div></div>}

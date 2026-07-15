@@ -26,7 +26,7 @@ Typography: **VT323** for OSD/utility labels, **Righteous** (used sparingly) for
 
 ## Motion and sound
 
-Use CRT bloom on power-on, a brief static burst on channel change, VHS tracking during rewind, and restrained applause/buzzer feedback. Scene art may use a slow camera settle only. Respect `prefers-reduced-motion`: remove static, pans, and distortion while preserving the state transition. Sound is additive; captions and visible state changes carry all essential feedback.
+Use CRT bloom on power-on, then the Player prototype’s CRT boot line and brief gray static tuning screen with a short white-noise cue. Story scene navigation is a direct program cut: do not insert boot/static graphics between beats. Use VHS tracking during rewind and restrained applause/buzzer feedback. Scene art may use a slow camera settle only. Respect `prefers-reduced-motion`: remove static, pans, and distortion while preserving the state transition. Sound is additive; captions and visible state changes carry all essential feedback.
 
 ### Scene performance layers
 
