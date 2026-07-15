@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import { NextResponse } from "next/server";
 import { demoEpisode, episodeBaseSchema, episodeSchema, type EpisodeSpec } from "@/lib/episode";
-import { defaultTheme, getPresetTheme, showThemeSchema, themeInputSchema, type ShowTheme } from "@/lib/theme";
+import { defaultTheme, getPresetTheme, normalizeCustomVoiceDirection, showThemeSchema, themeInputSchema, type ShowTheme } from "@/lib/theme";
 
 const MAX_CHARS = 12_000;
 
@@ -47,6 +47,7 @@ async function resolveTheme(client: OpenAI, input: unknown): Promise<{ theme: Sh
     ...draft,
     id: `custom-${Date.now()}`,
     origin: "custom",
+    ...normalizeCustomVoiceDirection(draft),
     safety: { sanitized: true, moderationPassed: true, blockedTerms: Array.from(new Set([...blockedTerms, ...draft.safety.blockedTerms])) },
   });
   return { theme, notice: blockedTerms.length ? `We made your own original show and removed: ${blockedTerms.join(", ")}.` : `Your original show, ${theme.name}, is ready for air.` };

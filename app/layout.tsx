@@ -16,7 +16,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body>{children}<svg width="0" height="0" aria-hidden="true" focusable="false">
         <filter id="rerun-posterize" colorInterpolationFilters="sRGB">
           <feComponentTransfer>

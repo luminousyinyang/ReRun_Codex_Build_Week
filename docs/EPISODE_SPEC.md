@@ -17,7 +17,7 @@ type Scene = {
 type EpisodeSpec = {
   version: 1; episodeId: string; courseId: string; title: string; channel: 3;
   format: "toon"; difficulty: 1 | 2 | 3 | 4 | 5;
-  theme?: ShowTheme; // normalized original style, palette, host persona, and safety metadata
+  theme?: ShowTheme; // normalized original style, palette, host persona, TTS voice/direction, and safety metadata
   learningObjectives: { id: string; conceptKey: string; text: string }[];
   cast: { id: string; name: string; persona: string; voice?: string; spriteRef?: string }[];
   scenes: Scene[]; cliffhanger: { teaser: string; airsAfterHours: number };
@@ -36,7 +36,7 @@ type ConceptGraph = {
 - MCQs have 2-4 unique options and exactly one correct option. Each non-correct option has a misconception key where one is known.
 - `onCorrect`, `onIncorrect`, and `next` point to existing scene IDs. The main path must reach the commercial and cliffhanger without cycles; a re-ask may loop only to its own variant beat.
 - `visualAsset`, when supplied, is a project-local public path to original/licensed/generated scene art. It is optional so a deterministic renderer can select a relevant local fallback for live scenes.
-- `theme`, when supplied, is normalized server-side from an original preset or adjective-only custom vibe. Client code never uses a raw vibe string as an image prompt.
+- `theme`, when supplied, is normalized server-side from an original preset or adjective-only custom vibe. It includes a supported built-in TTS `voice` and a server-compiled, original-show `voiceInstruction`; client code never uses a raw vibe string as an image prompt or voice instruction.
 - Branch outcomes include a factual `refutation` and lead to a variant question; no insult, ridicule, or punishment language is permitted.
 - The generator must return only source-grounded educational content. Client copy should call a schema failure “Technical Difficulties,” not expose raw model output.
 

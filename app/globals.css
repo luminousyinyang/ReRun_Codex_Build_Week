@@ -42,14 +42,14 @@ button { cursor:pointer; } button:focus-visible, textarea:focus-visible, input:f
 .scene-particles i:nth-child(9){left:12%;top:42%;animation-delay:-3.7s;animation-duration:9.2s}.scene-particles i:nth-child(10){left:58%;top:38%;animation-delay:-6.1s;animation-duration:7.1s}.scene-particles i:nth-child(11){left:72%;top:87%;animation-delay:-4.3s;animation-duration:9.7s}.scene-particles i:nth-child(12){left:91%;top:35%;animation-delay:-7.5s;animation-duration:6.4s}
 .character-rig { z-index:5;animation:host-idle 4.8s ease-in-out infinite;will-change:transform; }
 .character-rig:after { content:"";position:absolute;left:20%;right:16%;bottom:1%;height:10%;border-radius:50%;background:rgba(0,0,0,.35);filter:blur(10px);z-index:-1;animation:host-shadow 4.8s ease-in-out infinite; }
-.character-pose { transition:opacity .14s ease; }
+.character-pose { transition:none; }
 .character-idle { opacity:1;animation:host-idle-pose 4.8s ease-in-out infinite; }
 .character-talk { opacity:0;animation:none; }
 .generated-scene-beat .character-rig,.shot-decision .character-rig { animation-duration:2.4s; }
 .scene-alarm { z-index:6; }
 .scene-storm { z-index:6;mix-blend-mode:screen; }.scene-storm i { position:absolute;display:block;inset:0;opacity:0;background:linear-gradient(111deg,transparent 42%,rgba(225,242,255,.82) 48%,transparent 53%);animation:storm-flash 6.5s steps(1,end) infinite; }.scene-storm i:nth-child(2) { animation-delay:2.8s;transform:scaleX(-1); }
 .scene-copy { z-index:6;transition:opacity .2s ease,transform .25s ease,filter .25s ease; }
-.continue { z-index:7;transition:transform .2s ease,background .2s ease; }.continue:hover { transform:translateY(-2px);background:rgba(17,20,36,.96); }
+.continue { z-index:7;bottom:36px;transition:transform .2s ease,background .2s ease; }.continue:hover { transform:translateY(-2px);background:rgba(17,20,36,.96); }
 
 /* A beat takes control of the broadcast. The program remains as atmosphere,
    but cannot compete with the learner's decision. */
@@ -85,10 +85,29 @@ button { cursor:pointer; } button:focus-visible, textarea:focus-visible, input:f
 
 /* Voiced-show additions: scene layers move independently while the supplied
    host plates handle the speaking pose. */
+.scene-depth-slice { position:absolute;inset:0;z-index:2;overflow:hidden;pointer-events:none;will-change:transform; }
+.scene-depth-slice img { position:absolute;inset:0;width:100%;height:100%;display:block;object-fit:contain;object-position:center;will-change:transform; }
+/* These are deliberately shallow, feathered plate crops. They give a single
+   illustration stable foreground/mid/sky travel without inventing new scene
+   content or exposing a hard moving seam. */
+.scene-depth-sky { clip-path:inset(0 0 48% 0);-webkit-mask-image:linear-gradient(to bottom,#000 0 77%,transparent 100%);mask-image:linear-gradient(to bottom,#000 0 77%,transparent 100%);animation:plate-sky-drift 19s ease-in-out infinite alternate; }
+.scene-depth-mid { z-index:3;clip-path:inset(25% 0 24% 0);-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 23%,#000 76%,transparent 100%);mask-image:linear-gradient(to bottom,transparent 0,#000 23%,#000 76%,transparent 100%);animation:plate-mid-drift 14s ease-in-out infinite alternate; }
+.scene-depth-foreground-plate { z-index:4;clip-path:inset(55% 0 0 0);-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 28%);mask-image:linear-gradient(to bottom,transparent 0,#000 28%);animation:plate-foreground-drift 10s ease-in-out infinite alternate; }
 .scene-foreground { position:absolute;z-index:2;inset:auto -8% -14% -8%;height:34%;pointer-events:none;opacity:.34;background:radial-gradient(ellipse at 15% 75%,var(--theme-primary,#3e8a8c) 0 8%,transparent 9%),radial-gradient(ellipse at 80% 88%,var(--theme-accent,#e0a24b) 0 10%,transparent 11%);mix-blend-mode:screen;animation:foreground-drift 11s ease-in-out infinite alternate; }
 .generated-scene { filter:url(#rerun-posterize); }
 .character-rig.is-speaking .character-idle { opacity:0;animation:none; }
 .character-rig.is-speaking .character-talk { opacity:1;animation:host-talk-pose .85s ease-in-out infinite alternate; }
+.character-rig.is-retrying .character-idle { opacity:1;animation:host-retry .58s ease-in-out infinite alternate; }
+.character-rig.is-retrying .character-talk { opacity:0;animation:none; }
+.character-rig.is-celebrating { animation:host-celebrate .5s ease-in-out infinite alternate; }
+.character-rig.is-prompting:not(.is-speaking) { animation:host-prompt 1.2s ease-in-out infinite; }
 .theme-picker { margin:0 0 14px;padding:10px;border:1px solid rgba(255,176,0,.35);border-radius:10px;text-align:left; }.theme-picker legend { padding:0 5px;color:var(--amber);font:1.05rem VT323,monospace;letter-spacing:.08em; }.theme-options { display:flex;gap:6px;flex-wrap:wrap;max-height:96px;overflow:auto; }.theme-options button { padding:5px 8px;border:1px solid rgba(255,255,255,.22);border-radius:999px;color:var(--cream);background:rgba(255,255,255,.06);font-size:.72rem; }.theme-options button.is-selected { border-color:var(--amber);color:#201400;background:var(--amber); }.custom-vibe { display:block;margin-top:9px;color:rgba(255,255,255,.72);font-size:.76rem; }.custom-vibe input { display:block;width:100%;margin-top:4px;padding:7px 8px;border:1px solid rgba(255,176,0,.45);border-radius:6px;color:var(--cream);background:rgba(0,0,0,.28); }.theme-notice { margin:10px 0 0;color:var(--green);font-size:.82rem; }.ai-voice-note { position:absolute;z-index:8;right:12px;bottom:8px;margin:0;color:rgba(255,255,255,.48);font-size:.64rem; }
 @keyframes foreground-drift { from { transform:translate3d(-1.5%,1%,0); } to { transform:translate3d(1.5%,-1%,0); } }
-@media (prefers-reduced-motion:reduce) { .scene-foreground { animation:none !important;transition:none; } }
+@keyframes plate-sky-drift { from { transform:translate3d(-.55%,-.45%,0) scale(1.008); } to { transform:translate3d(.55%,.35%,0) scale(1.008); } }
+@keyframes plate-mid-drift { from { transform:translate3d(-1.1%,.25%,0) scale(1.015); } to { transform:translate3d(1.1%,-.25%,0) scale(1.015); } }
+@keyframes plate-foreground-drift { from { transform:translate3d(-1.8%,.7%,0) scale(1.025); } to { transform:translate3d(1.8%,-.7%,0) scale(1.025); } }
+@keyframes host-retry { from { transform:translateX(-2px) rotate(-2deg); } to { transform:translateX(2px) rotate(1.2deg); } }
+@keyframes host-celebrate { from { transform:translateY(0) rotate(-1deg); } to { transform:translateY(-8px) rotate(1.5deg); } }
+@keyframes host-prompt { 0%,100% { transform:translateX(0) rotate(0); } 42%,58% { transform:translateX(4px) rotate(2.2deg); } }
+.is-paused .scene-depth-slice,.has-question .scene-depth-slice { animation-play-state:paused; }
+@media (prefers-reduced-motion:reduce) { .scene-foreground,.scene-depth-slice { animation:none !important;transition:none; } }

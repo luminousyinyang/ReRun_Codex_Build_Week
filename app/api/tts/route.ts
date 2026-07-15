@@ -1,10 +1,11 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { ttsVoiceSchema } from "@/lib/theme";
 
 const inputSchema = z.object({
   text: z.string().trim().min(1).max(4_096),
-  voice: z.string().trim().min(1).max(80).optional(),
+  voice: ttsVoiceSchema.optional(),
   instructions: z.string().trim().max(600).optional(),
 });
 

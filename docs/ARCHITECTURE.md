@@ -21,7 +21,7 @@ The React client owns the CRT shell, scene traversal, branch transitions, remote
 | --- | --- | --- | --- |
 | `/api/ingest` | `{ text }` | `ConceptGraph` | rejects empty/oversize/non-educational input; client offers demo |
 | `/api/episode` | `{ text, themeInput }` | validated `EpisodeSpec`, normalized `ShowTheme` | custom vibes are sanitized/moderated; then controlled unavailable result |
-| `/api/tts` | `{ text, voice?, instructions? }` | streamed MP3 narration | unavailable in zero-key demo; client uses timed chatter fallback |
+| `/api/tts` | `{ text, voice?, instructions? }` | streamed MP3 narration | `voice` is a validated built-in TTS voice; unavailable in zero-key demo, where the client uses timed chatter fallback |
 | `/api/scene-image` | validated scene + sanitized `ShowTheme` | SSE preview/final JPEG events | bounded session cache; renderer keeps its local fallback |
 | `/api/beat/eval` | answer + rubric + scoped beat | `{ verdict, feedback, misconceptionKey? }` | P1 only; P0 MCQs are local/deterministic |
 | `/api/rewind` | scene, level, excluded analogies | replacement line object | retain original line and report unavailable if generation fails |
