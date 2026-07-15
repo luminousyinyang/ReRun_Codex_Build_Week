@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prerender:demo-audio": "node scripts/prerender-demo-audio.mjs"
   },
   "dependencies": {
     "next": "^15.0.0",

@@ -4,8 +4,69 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { demoEpisode, type EpisodeSpec, type Scene } from "@/lib/episode";
 import { SceneIllustration } from "@/components/scene-illustration";
 import { defaultTheme, showThemePresets, type ShowTheme, type ThemeInput } from "@/lib/theme";
+import { bundledDemoAudioFile } from "@/lib/demo-audio-manifest";
 
 type Screen = "off" | "boot" | "static" | "ingest" | "standby" | "recap" | "episode" | "guide";
+type Narration = "idle" | "loading" | "playing" | "fallback" | "complete";
+type NarrationTransport = "audio" | "speech" | "timer" | null;
+
+type AudioBus = {
+  context: AudioContext;
+  master: GainNode;
+  ambient: GainNode;
+  interval: number | null;
+  oscillators: OscillatorNode[];
+};
+
+function getAudioContext() {
+  const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  return AudioContextClass ? new AudioContextClass() : null;
+}
+
+function playTone(context: AudioContext, destination: AudioNode, frequency: number, duration: number, gainAmount: number, type: OscillatorType = "sine") {
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(frequency, context.currentTime);
+  gain.gain.setValueAtTime(0.0001, context.currentTime);
+  gain.gain.exponentialRampToValueAtTime(gainAmount, context.currentTime + 0.012);
+  gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + duration);
+  oscillator.connect(gain).connect(destination);
+  oscillator.start();
+  oscillator.stop(context.currentTime + duration + 0.02);
+}
+
+function startAudioBed(current: AudioBus | null, muted: boolean) {
+  if (current) return current;
+  const context = getAudioContext();
+  if (!context) return null;
+  const master = context.createGain();
+  const ambient = context.createGain();
+  master.gain.value = muted ? 0.0001 : 0.34;
+  ambient.gain.value = 0.055;
+  ambient.connect(master).connect(context.destination);
+  const oscillators = [55, 82.4].map((frequency, index) => {
+    const oscillator = context.createOscillator();
+    oscillator.type = index ? "triangle" : "sine";
+    oscillator.frequency.value = frequency;
+    oscillator.connect(ambient);
+    oscillator.start();
+    return oscillator;
+  });
+  const motif = () => {
+    if (context.state === "closed") return;
+    [220, 277.18, 329.63].forEach((frequency, index) => window.setTimeout(() => playTone(context, ambient, frequency, 0.32, 0.07), index * 125));
+  };
+  motif();
+  return { context, master, ambient, interval: window.setInterval(motif, 6_800), oscillators };
+}
+
+function stopAudioBed(bus: AudioBus | null) {
+  if (!bus) return;
+  if (bus.interval !== null) window.clearInterval(bus.interval);
+  bus.oscillators.forEach((oscillator) => oscillator.stop());
+  void bus.context.close();
+}
 
 function findScene(episode: EpisodeSpec, id: string) {
   return episode.scenes.find((scene) => scene.id === id) ?? episode.scenes[0];
@@ -61,16 +122,23 @@ export function ReRunPlayer() {
   const [themeInput, setThemeInput] = useState<ThemeInput>({ kind: "preset", id: defaultTheme.id });
   const [customVibe, setCustomVibe] = useState("");
   const [themeNotice, setThemeNotice] = useState("");
-  const [narration, setNarration] = useState<"idle" | "loading" | "playing" | "fallback" | "complete">("idle");
+  const [narration, setNarration] = useState<Narration>("idle");
   const [beatRevealed, setBeatRevealed] = useState(false);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
   const [hostReaction, setHostReaction] = useState<"celebrate" | "retry" | null>(null);
   const [visuals, setVisuals] = useState<Record<string, string>>({});
+  const [sceneCut, setSceneCut] = useState(false);
   const audioCache = useRef(new Map<string, string>());
+  const objectUrls = useRef(new Set<string>());
   const narrationTimer = useRef<number | null>(null);
   const fallbackDeadline = useRef(0);
   const fallbackRemaining = useRef(0);
   const resumeFallback = useRef<(() => void) | null>(null);
+  const narrationTransport = useRef<NarrationTransport>(null);
+  const speechUtterance = useRef<SpeechSynthesisUtterance | null>(null);
+  const audioBus = useRef<AudioBus | null>(null);
+  const previousSceneId = useRef<string | null>(null);
+  const sceneCutTimer = useRef<number | null>(null);
 
   const scene = useMemo(() => findScene(episode, sceneId), [episode, sceneId]);
   const accuracy = ratings.length ? Math.round((ratings.filter(Boolean).length / ratings.length) * 100) : null;
@@ -99,12 +167,47 @@ export function ReRunPlayer() {
   }, [screen]);
 
   useEffect(() => {
+    if (screen !== "episode") {
+      stopAudioBed(audioBus.current);
+      audioBus.current = null;
+      return;
+    }
+    audioBus.current = startAudioBed(audioBus.current, muted);
+    void audioBus.current?.context.resume();
+  }, [screen]);
+
+  useEffect(() => {
+    if (audioBus.current) {
+      audioBus.current.master.gain.setTargetAtTime(muted ? 0.0001 : 0.34, audioBus.current.context.currentTime, 0.025);
+    }
+  }, [muted]);
+
+  useEffect(() => {
+    if (screen !== "episode") {
+      previousSceneId.current = null;
+      return;
+    }
+    if (previousSceneId.current && previousSceneId.current !== sceneId) {
+      setSceneCut(true);
+      if (!muted && audioBus.current) {
+        const { context, master } = audioBus.current;
+        playTone(context, master, 880, 0.07, 0.1, "square");
+        window.setTimeout(() => playTone(context, master, 390, 0.09, 0.08, "triangle"), 35);
+      }
+      if (sceneCutTimer.current !== null) window.clearTimeout(sceneCutTimer.current);
+      sceneCutTimer.current = window.setTimeout(() => setSceneCut(false), 165);
+    }
+    previousSceneId.current = sceneId;
+  }, [screen, sceneId, muted]);
+
+  useEffect(() => {
     if (screen !== "episode" || !visibleLine) {
       setNarration("idle");
       return;
     }
     let cancelled = false;
     let audio: HTMLAudioElement | null = null;
+    let utterance: SpeechSynthesisUtterance | null = null;
     setBeatRevealed(false);
     setNarration("loading");
 
@@ -126,6 +229,7 @@ export function ReRunPlayer() {
     };
 
     const scheduleFallback = (delay: number) => {
+      narrationTransport.current = "timer";
       fallbackRemaining.current = delay;
       fallbackDeadline.current = Date.now() + delay;
       narrationTimer.current = window.setTimeout(finish, delay);
@@ -138,30 +242,58 @@ export function ReRunPlayer() {
       scheduleFallback(dwell);
     };
 
+    const useBrowserSpeech = () => {
+      if (cancelled || muted || !("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {
+        useFallback();
+        return;
+      }
+      utterance = new SpeechSynthesisUtterance(visibleLine);
+      speechUtterance.current = utterance;
+      narrationTransport.current = "speech";
+      utterance.lang = "en-US";
+      utterance.rate = 0.96;
+      utterance.pitch = 0.9;
+      utterance.onend = finish;
+      utterance.onerror = useFallback;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
+      setNarration("fallback");
+    };
+
     const playNarration = async () => {
       try {
         const cacheKey = `${activeTheme.id}:${visibleLine}`;
         let source = audioCache.current.get(cacheKey);
         if (!source) {
-          const response = await fetch("/api/tts", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ text: visibleLine, voice: activeTheme.voice, instructions: activeTheme.voiceInstruction }),
-          });
-          if (!response.ok) throw new Error("Narration unavailable");
-          source = URL.createObjectURL(await response.blob());
+          const bundledFilename = episode.episodeId === demoEpisode.episodeId ? bundledDemoAudioFile(activeTheme.voice, visibleLine) : undefined;
+          if (bundledFilename) {
+            const bundledSource = `/assets/audio/${bundledFilename}`;
+            const bundledResponse = await fetch(bundledSource, { method: "HEAD" });
+            if (bundledResponse.ok) source = bundledSource;
+          }
+          if (!source) {
+            const response = await fetch("/api/tts", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ text: visibleLine, voice: activeTheme.voice, instructions: activeTheme.voiceInstruction }),
+            });
+            if (!response.ok) throw new Error("Narration unavailable");
+            source = URL.createObjectURL(await response.blob());
+            objectUrls.current.add(source);
+          }
           audioCache.current.set(cacheKey, source);
         }
         if (cancelled) return;
         audio = new Audio(source);
+        narrationTransport.current = "audio";
         audio.muted = muted;
         audio.onended = finish;
-        audio.onerror = useFallback;
+        audio.onerror = useBrowserSpeech;
         setAudioElement(audio);
         await audio.play();
         if (!cancelled) setNarration("playing");
       } catch {
-        useFallback();
+        useBrowserSpeech();
       }
     };
     void playNarration();
@@ -171,19 +303,30 @@ export function ReRunPlayer() {
       if (narrationTimer.current !== null) window.clearTimeout(narrationTimer.current);
       narrationTimer.current = null;
       resumeFallback.current = null;
+      narrationTransport.current = null;
       if (audio) {
         audio.onended = null;
         audio.pause();
       }
+      if (utterance && speechUtterance.current === utterance) {
+        utterance.onend = null;
+        utterance.onerror = null;
+        window.speechSynthesis.cancel();
+        speechUtterance.current = null;
+      }
       setAudioElement(null);
     };
-  }, [screen, scene.id, visibleLine, activeTheme.id, activeTheme.voice, activeTheme.voiceInstruction]);
+  }, [screen, scene.id, visibleLine, activeTheme.id, activeTheme.voice, activeTheme.voiceInstruction, episode.episodeId, muted]);
 
   useEffect(() => {
     if (audioElement) {
       audioElement.muted = muted;
       if (paused) audioElement.pause();
       else if (narration === "playing") void audioElement.play().catch(() => undefined);
+    }
+    if (narrationTransport.current === "speech" && "speechSynthesis" in window) {
+      if (paused) window.speechSynthesis.pause();
+      else window.speechSynthesis.resume();
     }
     if (paused && narration === "fallback" && narrationTimer.current !== null) {
       window.clearTimeout(narrationTimer.current);
@@ -201,7 +344,9 @@ export function ReRunPlayer() {
   }, [hostReaction, scene.id, scene.type]);
 
   useEffect(() => () => {
-    for (const source of audioCache.current.values()) URL.revokeObjectURL(source);
+    for (const source of objectUrls.current) URL.revokeObjectURL(source);
+    stopAudioBed(audioBus.current);
+    if (sceneCutTimer.current !== null) window.clearTimeout(sceneCutTimer.current);
   }, []);
 
   useEffect(() => {
@@ -286,6 +431,10 @@ export function ReRunPlayer() {
   }
 
   function startEpisode() {
+    // This runs directly from the learner's click, preserving browser audio
+    // permission for the no-key ambience and the first scene-cut cue.
+    audioBus.current = startAudioBed(audioBus.current, muted);
+    void audioBus.current?.context.resume();
     setSceneId(scene.next ?? "s1");
     setScreen("episode");
     setNotice("");
@@ -368,7 +517,10 @@ export function ReRunPlayer() {
             {screen === "ingest" && <div className="ingest-screen"><ScreenHeader right="NO SIGNAL - REC" /><div className="ingest-body"><p className="eyebrow">CH 00</p><h1>Feed me your material.</h1><fieldset className="theme-picker"><legend>Choose your original show</legend><div className="theme-options">{showThemePresets.map((theme) => <button type="button" key={theme.id} className={themeInput.kind === "preset" && themeInput.id === theme.id ? "is-selected" : ""} onClick={() => { setThemeInput({ kind: "preset", id: theme.id }); setCustomVibe(""); }}>{theme.name}</button>)}</div><label className="custom-vibe">Or describe an original vibe<input value={customVibe} onFocus={() => setThemeInput({ kind: "custom", vibe: customVibe })} onChange={(event) => { setCustomVibe(event.target.value); setThemeInput({ kind: "custom", vibe: event.target.value }); }} placeholder="e.g. wry suburban cartoon, warm flat colors" maxLength={300} /></label></fieldset><textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Paste short study notes here..." aria-label="Study notes" /><div className="ingest-actions"><button onClick={loadDemo} className="secondary">Load demo course</button><button onClick={generateEpisode} disabled={liveLoading} className="primary">{liveLoading ? "ON AIR..." : "Generate episode"}</button></div><p className="quiet">Live generation is optional. The demo needs no API key.</p>{themeNotice && <p className="theme-notice">{themeNotice}</p>}</div></div>}
             {screen === "standby" && <div className="screen-center standby-screen"><p>PLEASE STAND BY</p><span>TONIGHT&apos;S EPISODE IS IN PRODUCTION</span></div>}
             {screen === "recap" && <div className="recap-screen"><ScreenHeader right="PREVIOUSLY ON..." /><div className="recap-body"><p className="eyebrow">WARM-UP BEFORE WE ROLL TAPE</p><h2>{episode.title}</h2><label>{scene.recap?.[0]?.prompt}<input value={recap} onChange={(event) => setRecap(event.target.value)} placeholder="your answer" /></label>{recapFeedback && <p className="feedback">{recapFeedback}</p>}<div className="ingest-actions"><button className="secondary" onClick={checkRecap}>Check</button><button className="primary" onClick={startEpisode}>Now airing - CH 03</button></div></div></div>}
-            {screen === "episode" && <div className={`episode-screen ${paused ? "is-paused" : ""} ${isBeat && beatRevealed && !paused ? "has-question" : ""} ${answeringOption ? "is-answering" : ""}`}><ScreenHeader right={isCommercial ? "COMMERCIAL BREAK" : "THE TOON BLOCK"} /><div className={`scene-art scene-${scene.type}`}><SceneIllustration scene={scene} narrating={narration === "playing" || narration === "fallback"} reaction={hostReaction} questionReady={isBeat && beatRevealed && !paused} visualOverride={visuals[scene.id]} /></div><div className={`scene-copy ${isOutcome ? "has-refutation" : ""}`}><p className="speaker">{scene.speaker}</p>{captions && <p className="caption">{visibleLine}</p>}{isOutcome && <p className="refutation">↺ {scene.refutation}</p>}</div>{paused && <aside className="deep-dive"><p>PAUSED - DEEP DIVE</p><strong>{scene.deepDive ?? "Stay with the current scene, then answer the next beat."}</strong><button onClick={() => setPaused(false)}>Resume show</button></aside>}{isBeat && beatRevealed && !paused && <><div className="question-wash" aria-hidden="true" /><section className={`beat-card ${isCommercial ? "commercial" : ""}`} role="dialog" aria-modal="true" aria-labelledby={`question-${scene.id}`}><p>{isCommercial ? "SKIP THIS AD - answer a review question" : "SIGNAL LOCKED — THE SHOW NEEDS YOU"}</p><h2 id={`question-${scene.id}`}>{scene.beat!.question}</h2><div className="options">{scene.beat!.options.map((option, index) => <button key={option.id} autoFocus={index === 0} className={answeringOption === option.id ? "is-selected" : ""} disabled={Boolean(answeringOption)} onClick={() => choose(option.id)}><span>{String.fromCharCode(65 + index)}</span><b>{option.text}</b>{answeringOption === option.id && <em>LOCKED IN</em>}</button>)}</div></section></>}{!isBeat && !isCliffhanger && !paused && <button onClick={advance} className="continue">{narration === "loading" || narration === "playing" || narration === "fallback" ? "Skip line" : isOutcome ? "Rewind & retry" : "Continue"} ▶</button>}{isCliffhanger && <section className="cliffhanger"><p>TO BE CONTINUED</p><h2>{episode.cliffhanger.teaser}</h2><span>Next episode airs in {episode.cliffhanger.airsAfterHours} hours</span><button onClick={() => setScreen("guide")}>See TV guide</button></section>}<p className="ai-voice-note">AI-generated narration · captions carry all essential feedback</p></div>}
+            {screen === "episode" && <div className={`episode-screen ${paused ? "is-paused" : ""} ${isBeat && beatRevealed && !paused ? "has-question" : ""} ${answeringOption ? "is-answering" : ""}`}><ScreenHeader right={isCommercial ? "COMMERCIAL BREAK" : "THE TOON BLOCK"} /><div className={`scene-art scene-${scene.type}`}><SceneIllustration scene={scene} narrating={narration === "playing" || narration === "fallback"} reaction={hostReaction} questionReady={isBeat && beatRevealed && !paused} visualOverride={visuals[scene.id]} /></div><div className={`scene-cut ${sceneCut ? "is-active" : ""}`} aria-hidden="true" /><div className={`scene-copy ${isOutcome ? "has-refutation" : ""}`}><p className="speaker">{scene.speaker}</p>{captions && <p className="caption">{visibleLine}</p>}{isOutcome && <p className="refutation">↺ {scene.refutation}</p>}</div>{paused && <aside className="deep-dive"><p>PAUSED - DEEP DIVE</p><strong>{scene.deepDive ?? "Stay with the current scene, then answer the next beat."}</strong><button onClick={() => setPaused(false)}>Resume show</button></aside>}{isBeat && beatRevealed && !paused && <><div className="question-wash" aria-hidden="true" /><section className={`beat-card ${isCommercial ? "commercial" : ""}`} role="dialog" aria-modal="true" aria-labelledby={`question-${scene.id}`}><p>{isCommercial ? "SKIP THIS AD - answer a review question" : "SIGNAL LOCKED — THE SHOW NEEDS YOU"}</p><h2 id={`question-${scene.id}`}>{scene.beat!.question}</h2><div className="options">{scene.beat!.options.map((option, index) => {
+              const isSelected = answeringOption === option.id;
+              return <button key={option.id} autoFocus={index === 0} className={isSelected ? `is-selected ${option.isCorrect ? "is-correct" : "is-wrong"}` : ""} disabled={Boolean(answeringOption)} onClick={() => choose(option.id)}><span>{String.fromCharCode(65 + index)}</span><b>{option.text}</b>{isSelected && <em>ANSWER LOCKED</em>}</button>;
+            })}</div></section></>}{!isBeat && !isCliffhanger && !paused && <button onClick={advance} className="continue">{narration === "loading" || narration === "playing" || narration === "fallback" ? "Skip line" : isOutcome ? "Rewind & retry" : "Continue"} ▶</button>}{isCliffhanger && <section className="cliffhanger"><p>TO BE CONTINUED</p><h2>{episode.cliffhanger.teaser}</h2><span>Next episode airs in {episode.cliffhanger.airsAfterHours} hours</span><button onClick={() => setScreen("guide")}>See TV guide</button></section>}<p className="ai-voice-note">Narration available without an API key · captions carry all essential feedback</p></div>}
             {screen === "guide" && <div className="guide-screen"><ScreenHeader right="SPACED REVIEW LINEUP" /><div className="guide-body"><p className="eyebrow">TV GUIDE</p><h2>Next on ReRun</h2><div className="guide-row"><b>CH 03</b><span>{episode.title}</span><i>WATCHED</i></div><div className="guide-row"><b>CH 03</b><span>{episode.cliffhanger.teaser}</span><i>+{episode.cliffhanger.airsAfterHours}h</i></div><div className="guide-row locked"><b>CH 07</b><span>The Buzz-In</span><i>COMING SOON</i></div><button className="primary" onClick={loadDemo}>Watch again</button></div></div>}
             {notice && <p className="notice" role="status">{notice}</p>}
           </div>

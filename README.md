@@ -4,7 +4,7 @@
 
 ReRun is being built for the **OpenAI Build Week 2026 - Education** category. It is designed for high-school, college, and self-directed learners who want a more active alternative to passive study media.
 
-> Status: the bundled demo is a voiced-show-ready, deterministic interactive experience: it performs timed host chatter and auto-play without credentials, while configured OpenAI routes add AI narration, live scene art, and original-show themes with their own validated TTS voice and delivery direction for pasted notes.
+> Status: the bundled demo is a no-key interactive broadcast: it uses checked-in narration MP3s when supplied, browser speech when they are not, and a visible timed fallback only when audio is unavailable. Configured OpenAI routes add AI narration, live scene art, and original-show themes with their own validated TTS voice and delivery direction for pasted notes.
 
 ## The missing visual layer
 

@@ -59,7 +59,7 @@ export const themeInputSchema = z.union([
 
 export type ThemeInput = z.infer<typeof themeInputSchema>;
 
-const exclusions = "No real people, named shows, studios, brands, characters, logos, text, watermarks, signatures, photorealism, 3D render, CGI, gradients, airbrushed blends, visible brush strokes, or hyperdetail.";
+const exclusions = "No real people, named shows, studios, brands, characters, logos, text, readable or pseudo-text, glyphs, letterforms, labels, watermarks, signatures, photorealism, 3D render, CGI, gradients, airbrushed blends, visible brush strokes, or hyperdetail.";
 
 function preset(
   id: string,

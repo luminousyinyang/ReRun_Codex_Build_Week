@@ -11,15 +11,15 @@ type SceneIllustrationProps = {
 
 const visualFallbacks = {
   sunlight: "/assets/scenes-v3/sunlight-vault-v3.jpg",
-  vault: "/assets/scenes-v3/atp-vault-v3.jpg",
+  vault: "/assets/scenes-v3/atp-vault-v4.jpg",
   commercial: "/assets/scenes-v3/review-break-v3.jpg",
-  cliffhanger: "/assets/scenes-v3/calvin-storm-v3.jpg",
+  cliffhanger: "/assets/scenes-v3/calvin-storm-v5.jpg",
 } as const;
 
 const hostPlates = {
   idle: "/assets/motion/professor-paws-flat-idle.png",
   talk: "/assets/motion/professor-paws-flat-talk.png",
-  retry: "/assets/motion/professor-paws-flat-retry.png",
+  retry: "/assets/motion/professor-paws-flat-retry-v2.png",
 };
 
 function resolveVisual(scene: Scene) {

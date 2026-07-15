@@ -1,11 +1,36 @@
 import { describe, expect, it } from "vitest";
-import { demoEpisode, episodeSchema } from "@/lib/episode";
+import { zodTextFormat } from "openai/helpers/zod";
+import { demoEpisode, episodeResponseSchema, episodeSchema, validateLiveEpisode } from "@/lib/episode";
 import { buildSceneArtPrompt, makeSceneArtKey, sceneArtRequestSchema } from "@/lib/scene-art";
 import { defaultTheme, getPresetTheme, normalizeCustomVoiceDirection, showThemePresets, showThemeSchema, supportedTtsVoices } from "@/lib/theme";
 
 describe("theme and art contracts", () => {
   it("keeps the demo episode valid with a normalized theme", () => {
     expect(episodeSchema.parse(demoEpisode).theme?.id).toBe(defaultTheme.id);
+  });
+
+  it("gives every demo scene with narration two rewind takes", () => {
+    const narratedScenes = demoEpisode.scenes.filter((scene) => scene.line);
+    expect(narratedScenes).toHaveLength(10);
+    expect(narratedScenes.every((scene) => scene.simpler && scene.simplerAgain)).toBe(true);
+  });
+
+  it("requires a live recap answer grounded in the supplied notes", () => {
+    const grounded = structuredClone(demoEpisode);
+    grounded.scenes[0].recap = [{
+      prompt: "Which molecule carries ready-to-use cell energy?",
+      answers: ["ATP"],
+      conceptKey: "cell.atp",
+    }];
+    expect(validateLiveEpisode(grounded, "ATP is a cell's ready-to-use energy carrier.").scenes[0].recap?.[0].answers).toEqual(["ATP"]);
+
+    const placeholder = structuredClone(grounded);
+    placeholder.scenes[0].recap![0].answers = ["study"];
+    expect(() => validateLiveEpisode(placeholder, "ATP is a cell's ready-to-use energy carrier.")).toThrow(/grounded/i);
+  });
+
+  it("uses a Structured Outputs-compatible episode transport schema", () => {
+    expect(() => zodTextFormat(episodeResponseSchema, "rerun_episode")).not.toThrow();
   });
 
   it("ships ten safe original preset themes", () => {

@@ -25,6 +25,8 @@ button { cursor:pointer; } button:focus-visible, textarea:focus-visible, input:f
    fill, independent atmosphere, and a continuously performing host. */
 .episode-screen .screen-header { position:relative;z-index:8;padding:14px 18px 0;pointer-events:none; }
 .scene-art { transition:filter .28s ease,transform .28s ease;will-change:filter,transform; }
+.scene-cut { position:absolute;z-index:9;inset:0;pointer-events:none;opacity:0;background:repeating-linear-gradient(0deg,rgba(255,255,255,.76) 0 1px,rgba(10,10,12,.94) 1px 4px),linear-gradient(90deg,transparent,rgba(255,255,255,.38),transparent);mix-blend-mode:screen; }
+.scene-cut.is-active { animation:scene-cut .165s steps(3,end) both; }
 .generated-scene { --spark:#fff0a3;--spark-shadow:rgba(255,214,84,.65);--haze:rgba(88,236,193,.17);--ray:rgba(255,239,165,.28); }
 .shot-discovery { --spark:#b7f7ff;--spark-shadow:rgba(81,222,255,.72);--haze:rgba(60,170,255,.19);--ray:rgba(111,236,255,.21); }
 .shot-review { --spark:#ffe272;--spark-shadow:rgba(255,193,51,.7);--haze:rgba(255,124,74,.16);--ray:rgba(255,203,68,.25); }
@@ -58,24 +60,25 @@ button { cursor:pointer; } button:focus-visible, textarea:focus-visible, input:f
 .has-question .scene-backdrop,.has-question .scene-image,.has-question .scene-light-rays i,.has-question .scene-haze i,.has-question .scene-particles i,.has-question .character-rig,.has-question .character-rig:after,.has-question .character-pose,.has-question .scene-storm i,.is-paused .scene-light-rays i,.is-paused .scene-haze i,.is-paused .scene-storm i { animation-play-state:paused; }
 .question-wash { position:absolute;z-index:7;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,rgba(13,28,53,.34) 0 32%,rgba(2,4,11,.82) 76%),linear-gradient(110deg,rgba(35,255,163,.08),transparent 36%,rgba(255,176,0,.1));box-shadow:inset 0 0 120px rgba(0,0,0,.85);animation:signal-lock .42s ease-out both; }
 .beat-card { z-index:8;width:min(84%,530px);padding:23px 24px 22px;border:1px solid rgba(255,201,69,.82);background:linear-gradient(135deg,rgba(7,13,29,.97),rgba(5,7,16,.985));box-shadow:0 24px 80px rgba(0,0,0,.72),0 0 0 1px rgba(51,255,102,.12),inset 0 1px rgba(255,255,255,.1);animation:question-arrival .42s cubic-bezier(.16,.84,.27,1) both; }
-.beat-card:before { content:"";position:absolute;inset:7px;border:1px solid rgba(51,255,102,.14);border-radius:8px;pointer-events:none; }.beat-card>p { position:relative;color:var(--green);font-size:1.3rem;text-shadow:0 0 12px rgba(51,255,102,.5); }.beat-card h2 { position:relative;margin:9px 0 17px;font-size:clamp(1.08rem,2.8vw,1.45rem);line-height:1.28; }.options { position:relative;gap:9px; }.options button { position:relative;min-height:48px;padding:10px 12px;overflow:hidden;transition:border-color .18s ease,background .18s ease,transform .18s ease; }.options button:hover:not(:disabled),.options button:focus-visible { transform:translateX(4px);border-color:var(--amber);background:rgba(255,176,0,.14); }.options button:disabled { cursor:wait; }.options button span { flex:0 0 auto; }.options button b { font-weight:600; }.options button em { margin-left:auto;color:var(--green);font:1.06rem VT323,monospace;font-style:normal;letter-spacing:.08em; }.options button.is-selected { border-color:var(--green);background:rgba(51,255,102,.13);animation:choice-lock .45s ease-in-out infinite alternate; }
+.beat-card:before { content:"";position:absolute;inset:7px;border:1px solid rgba(51,255,102,.14);border-radius:8px;pointer-events:none; }.beat-card>p { position:relative;color:var(--green);font-size:1.3rem;text-shadow:0 0 12px rgba(51,255,102,.5); }.beat-card h2 { position:relative;margin:9px 0 17px;font-size:clamp(1.08rem,2.8vw,1.45rem);line-height:1.28; }.options { position:relative;gap:9px; }.options button { position:relative;min-height:48px;padding:10px 12px;overflow:hidden;transition:border-color .18s ease,background .18s ease,transform .18s ease; }.options button:hover:not(:disabled),.options button:focus-visible { transform:translateX(4px);border-color:var(--amber);background:rgba(255,176,0,.14); }.options button:disabled { cursor:wait; }.options button span { flex:0 0 auto; }.options button b { font-weight:600; }.options button em { margin-left:auto;color:var(--green);font:1.06rem VT323,monospace;font-style:normal;letter-spacing:.08em; }.options button.is-selected { border-color:var(--amber);background:rgba(255,176,0,.14);animation:choice-lock .45s ease-in-out infinite alternate; }.options button.is-selected em { color:var(--amber); }.options button.is-selected.is-correct { border-color:var(--green);background:rgba(51,255,102,.13); }.options button.is-selected.is-correct em { color:var(--green); }.options button.is-selected.is-wrong { border-color:var(--amber);background:rgba(255,176,0,.16);animation:choice-lock-wrong .45s ease-in-out infinite alternate; }
 .commercial.beat-card { border-color:rgba(255,255,255,.86);background:linear-gradient(135deg,rgba(38,15,27,.98),rgba(10,7,18,.99)); }
 
 @keyframes scene-camera { from { transform:translate3d(0,7px,0); } to { transform:translate3d(0,-7px,0); } }
 @keyframes backdrop-drift { from { transform:scale(1.12) translate3d(-.7%,.5%,0); } to { transform:scale(1.17) translate3d(.7%,-.5%,0); } }
 @keyframes ray-breathe { from { opacity:.25;transform:rotate(19deg) translateX(-8px); } to { opacity:.9;transform:rotate(19deg) translateX(12px); } }
 @keyframes haze-float { from { transform:translate3d(-10px,8px,0) scale(.9);opacity:.35; } to { transform:translate3d(18px,-9px,0) scale(1.15);opacity:.8; } }
-@keyframes host-idle { 0%,100% { transform:translate3d(0,0,0) rotate(-.35deg); } 45% { transform:translate3d(2px,-6px,0) rotate(.45deg); } 70% { transform:translate3d(-1px,-3px,0) rotate(-.15deg); } }
+@keyframes host-idle { 0%,100% { transform:translate3d(0,0,0) rotate(-.2deg); } 45% { transform:translate3d(1px,-2px,0) rotate(.2deg); } 70% { transform:translate3d(-.5px,-1px,0) rotate(-.1deg); } }
 @keyframes host-shadow { 0%,100% { transform:scale(1);opacity:.34; } 45% { transform:scale(.88);opacity:.24; } }
 @keyframes host-idle-pose { 0%,100% { transform:translateX(0); } 48% { transform:translateX(-1px); } }
-@keyframes host-talk-pose { 0%,100% { transform:translateY(1px) rotate(-.4deg); } 50% { transform:translateY(-2px) rotate(.5deg); } }
 @keyframes storm-flash { 0%,89%,93%,100% { opacity:0; } 90%,92% { opacity:.8; } }
 @keyframes signal-lock { from { opacity:0; } to { opacity:1; } }
 @keyframes question-arrival { from { opacity:0;transform:translate(-50%,-47%) scale(.96); } to { opacity:1;transform:translate(-50%,-50%) scale(1); } }
 @keyframes choice-lock { from { box-shadow:0 0 0 rgba(51,255,102,0); } to { box-shadow:0 0 20px rgba(51,255,102,.28); } }
+@keyframes choice-lock-wrong { from { box-shadow:0 0 0 rgba(255,176,0,0); } to { box-shadow:0 0 20px rgba(255,176,0,.3); } }
+@keyframes scene-cut { 0% { opacity:0;transform:scaleY(.04); } 18% { opacity:.88;transform:scaleY(1); } 48% { opacity:.36;transform:translateY(-3%); } 100% { opacity:0;transform:translateY(4%); } }
 
 @media (max-width:800px) { .episode-screen .screen-header { padding:10px 12px 0; }.beat-card { width:min(92%,530px);padding:18px 16px; }.beat-card h2 { margin-bottom:13px; }.options button { min-height:44px;padding:8px 9px; }.options button em { font-size:.88rem; }.scene-copy { right:14px; }.caption { font-size:clamp(.8rem,3.1vw,1rem); } }
-@media (prefers-reduced-motion:reduce) { .scene-art,.scene-copy,.continue,.options button { transition:none; }.scene-backdrop,.scene-image,.scene-light-rays i,.scene-haze i,.scene-particles i,.character-rig,.character-rig:after,.character-pose,.scene-storm i,.question-wash,.beat-card,.options button.is-selected { animation:none !important; }.has-question .scene-art { filter:brightness(.34);transform:none; } }
+@media (prefers-reduced-motion:reduce) { .scene-art,.scene-copy,.continue,.options button { transition:none; }.scene-backdrop,.scene-image,.scene-light-rays i,.scene-haze i,.scene-particles i,.character-rig,.character-rig:after,.character-pose,.scene-storm i,.question-wash,.beat-card,.options button.is-selected,.scene-cut { animation:none !important; }.has-question .scene-art { filter:brightness(.34);transform:none; } }
 
 /* The screen owns a fixed tube viewport. Keeping the OSD out of normal flow
    prevents it from adding height and pushing the bottom transport off-screen. */
@@ -96,7 +99,7 @@ button { cursor:pointer; } button:focus-visible, textarea:focus-visible, input:f
 .scene-foreground { position:absolute;z-index:2;inset:auto -8% -14% -8%;height:34%;pointer-events:none;opacity:.34;background:radial-gradient(ellipse at 15% 75%,var(--theme-primary,#3e8a8c) 0 8%,transparent 9%),radial-gradient(ellipse at 80% 88%,var(--theme-accent,#e0a24b) 0 10%,transparent 11%);mix-blend-mode:screen;animation:foreground-drift 11s ease-in-out infinite alternate; }
 .generated-scene { filter:url(#rerun-posterize); }
 .character-rig.is-speaking .character-idle { opacity:0;animation:none; }
-.character-rig.is-speaking .character-talk { opacity:1;animation:host-talk-pose .85s ease-in-out infinite alternate; }
+.character-rig.is-speaking .character-talk { opacity:1;animation:none; }
 .character-rig.is-retrying .character-idle { opacity:1;animation:host-retry .58s ease-in-out infinite alternate; }
 .character-rig.is-retrying .character-talk { opacity:0;animation:none; }
 .character-rig.is-celebrating { animation:host-celebrate .5s ease-in-out infinite alternate; }
