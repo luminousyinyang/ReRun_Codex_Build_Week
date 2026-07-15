@@ -1,0 +1,48 @@
+# Product specification
+
+## Product promise
+
+ReRun makes the learner a necessary cast member in an educational TV show. The episode cannot progress until they retrieve, choose, or explain the relevant idea.
+
+## Audience
+
+- **Primary:** students age 13+ and adult self-learners preparing for an assessment.
+- **Secondary (post-MVP):** teachers assigning a course or reviewing class misconceptions.
+
+ReRun is study support, not assessment certification, professional advice, or a substitute for instruction or accommodations.
+
+## P0 journeys
+
+### First use
+
+1. Learner powers on a CRT in a dim room.
+2. They load the bundled demo or paste short notes.
+3. A “Please Stand By” state presents a recap while an optional live episode is generated.
+4. CH 03 begins; a character pauses at a question beat.
+5. The learner answers, sees accurate feedback, and reaches a cliffhanger/review time.
+
+### Incorrect-answer recovery
+
+1. Learner chooses a plausible misconception.
+2. A short consequence scene illustrates why the logic fails without shaming the learner.
+3. The show states the corrective contrast, offers rewind, and re-asks a meaningfully different question.
+4. The learner can continue only after an active response.
+
+## Learning-design rules
+
+- Every P0 beat asks for retrieval; no scene advances solely by passive watching.
+- Corrections identify the conceptual distinction and remain faithful to source material.
+- Rewind changes reading level and analogy, not factual content.
+- Commercial questions draw on previously introduced concepts when data is available.
+- Ratings reflect recent demonstrated performance only; they are not grades, diagnoses, or learner labels.
+
+## MVP acceptance criteria
+
+- First interactive beat appears in demo mode without external calls.
+- The episode has at least three question opportunities, one consequence branch, one variant re-ask, one commercial review, and one cliffhanger.
+- Captions are available by default; sound is optional; controls work with keyboard and touch.
+- A live-mode failure surfaces a readable “technical difficulties” explanation and a demo launch action.
+
+## Explicit non-goals
+
+P0 excludes rich PDF/OCR fidelity, accounts, teacher analytics, multiplayer, formal grading, high-stakes use, full adaptive scheduling, and generated video. Those items must not be implied in product copy or the demo.

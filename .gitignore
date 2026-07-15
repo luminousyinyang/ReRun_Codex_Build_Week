@@ -1,0 +1,43 @@
+# Dependencies and package-manager state
+node_modules/
+.pnp/
+.pnp.js
+
+# Next.js, build, test, and deployment output
+.next/
+out/
+build/
+dist/
+coverage/
+.vercel/
+.turbo/
+
+# Environment files: keep the documented template only
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+!.env.example
+
+# Generated media and runtime caches (never source demo fixtures or public assets)
+.cache/
+tmp/
+output/
+*.tsbuildinfo
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
