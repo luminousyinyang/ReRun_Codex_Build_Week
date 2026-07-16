@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { zodTextFormat } from "openai/helpers/zod";
-import { demoEpisode, episodeResponseSchema, episodeSchema, validateLiveEpisode } from "@/lib/episode";
+import { demoEpisode, demoShows, episodeResponseSchema, episodeSchema, validateLiveEpisode } from "@/lib/episode";
 import { buildSceneArtPrompt, makeSceneArtKey, sceneArtRequestSchema } from "@/lib/scene-art";
 import { defaultTheme, getPresetTheme, normalizeCustomVoiceDirection, showThemePresets, showThemeSchema, supportedTtsVoices } from "@/lib/theme";
 
@@ -13,6 +13,12 @@ describe("theme and art contracts", () => {
     const narratedScenes = demoEpisode.scenes.filter((scene) => scene.line);
     expect(narratedScenes).toHaveLength(10);
     expect(narratedScenes.every((scene) => scene.simpler && scene.simplerAgain)).toBe(true);
+  });
+
+  it("ships five playable no-key demo shows with distinct themes", () => {
+    expect(demoShows).toHaveLength(5);
+    expect(new Set(demoShows.map((show) => show.theme.id)).size).toBe(5);
+    expect(demoShows.every((show) => episodeSchema.safeParse(show.episode).success)).toBe(true);
   });
 
   it("requires a live recap answer grounded in the supplied notes", () => {

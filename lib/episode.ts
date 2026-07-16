@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { defaultTheme, showThemeSchema } from "@/lib/theme";
+import { defaultTheme, getPresetTheme, showThemeSchema, type ShowTheme } from "@/lib/theme";
 
 export const sceneTypes = ["recap", "narrative", "beat", "branch_outcome", "commercial", "cliffhanger"] as const;
 
@@ -185,3 +185,46 @@ export const demoEpisode: EpisodeSpec = episodeSchema.parse({
   ],
   cliffhanger: { teaser: "Next: the Calvin Cycle Caper.", airsAfterHours: 24 },
 });
+
+export type DemoShow = {
+  id: string;
+  title: string;
+  teaser: string;
+  theme: ShowTheme;
+  episode: EpisodeSpec;
+  art: { teaching: string; challenge: string };
+};
+
+function demoShow(id: string, title: string, teaser: string, themeId: string): DemoShow {
+  const theme = getPresetTheme(themeId);
+  return {
+    id,
+    title,
+    teaser,
+    theme,
+    art: {
+      teaching: `/assets/demo-shows/${id}-teaching.jpg`,
+      challenge: `/assets/demo-shows/${id}-challenge.jpg`,
+    },
+    episode: episodeSchema.parse({
+      ...demoEpisode,
+      episodeId: `demo-${id}`,
+      courseId: `demo-${id}`,
+      title,
+      theme,
+      cast: demoEpisode.cast.map((member, index) => index === 0 ? { ...member, persona: theme.hostPersona } : member),
+      cliffhanger: { ...demoEpisode.cliffhanger, teaser },
+    }),
+  };
+}
+
+/** Five no-key show skins for the same short, reviewable photosynthesis pilot.
+ * They make the show-format choice immediately explorable without asking a
+ * visitor to provide notes or configure a live-generation key. */
+export const demoShows: DemoShow[] = [
+  demoShow("photon-frontier", "The Photon Frontier", "Next: The Carbon Circuit", "retro-sci-fi"),
+  demoShow("cellular-casefile", "The Cellular Casefile", "Next: The Calvin Cycle Caper", "noir"),
+  demoShow("power-up-plant-lab", "Power-Up Plant Lab", "Next: The Carbon Capture Rescue", "power-squad"),
+  demoShow("tiny-lightkeepers", "The Tiny Lightkeepers", "Next: The Garden's Sugar Story", "cozy-preschool"),
+  demoShow("chloroplast-quest", "The Chloroplast Quest", "Next: The Cycle Beyond the Storm", "neon-quest"),
+];

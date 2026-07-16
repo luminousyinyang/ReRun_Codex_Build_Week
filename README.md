@@ -42,7 +42,7 @@ cp .env.example .env.local # optional; demo mode works without it
 npm run dev
 ```
 
-Open `http://localhost:3000`, choose **Load demo course**, and complete the judge path above. Do not commit `.env.local`; `.gitignore` protects secrets while preserving `.env.example`.
+Open `http://localhost:3000`, choose **Browse 5 demo shows**, then pick any pilot and complete the judge path above. Do not commit `.env.local`; `.gitignore` protects secrets while preserving `.env.example`.
 
 ## Architecture at a glance
 
@@ -54,7 +54,7 @@ The renderer owns presentation and navigation. The model may author validated co
 - **Server:** structured episode generation, TTS narration, safe original-theme normalization, and streamed scene-art routes.
 - **Reliability:** Zod validation, one repair retry for generated structures, cached/bundled demo assets, and clear fallback states.
 
-The Photosynthesis demo includes a local, original animated-world visual pack and never needs an API key. Configured live episodes use a sanitized original theme, stream matching scene art without blocking playback, and retain the same deterministic fallback art if a request fails. Each theme selects a supported built-in TTS voice plus original delivery direction; audio is AI-generated when configured and is disclosed in the player.
+Five no-key Photosynthesis pilots make the show-format choice explorable immediately; each has a distinct original theme and title while retaining the same reviewable learning path. Configured live episodes use a sanitized original theme, stream matching scene art without blocking playback, and retain the same deterministic fallback art if a request fails. Each theme selects a supported built-in TTS voice plus original delivery direction; audio is AI-generated when configured and is disclosed in the player.
 
 The full contract is in [Architecture](docs/ARCHITECTURE.md) and [EpisodeSpec v1](docs/EPISODE_SPEC.md).
 
