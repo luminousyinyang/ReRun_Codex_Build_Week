@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { demoEpisode, demoShows, episodeSchema, type DemoShow, type EpisodeSpec, type Scene } from "@/lib/episode";
 import { SceneIllustration } from "@/components/scene-illustration";
-import { defaultTheme, showThemePresets, type ShowTheme, type ThemeInput } from "@/lib/theme";
+import { defaultTheme, narrationThemeFor, showThemePresets, type ShowTheme, type ThemeInput } from "@/lib/theme";
 import { bundledDemoAudioFile } from "@/lib/demo-audio-manifest";
 import { MAX_STUDY_CHARS, MIN_STUDY_CHARS } from "@/lib/limits";
 import { loadLiveEpisodeArt, saveLiveEpisodeArt } from "@/lib/live-art-cache";
@@ -271,7 +271,7 @@ export function ReRunPlayer() {
     [episode.episodeId, scene.id, scene.beat],
   );
   const displayedQuestion = rewindLevel > 0 && displayedBeat?.simplerQuestion ? displayedBeat.simplerQuestion : displayedBeat?.question;
-  const activeTheme = episode.theme ?? defaultTheme;
+  const activeTheme = narrationThemeFor(episode.theme);
   const isDemoEpisode = Boolean(activeDemoShow);
   const guideEpisodes = useMemo(() => {
     if (activeDemoShow) {
@@ -939,7 +939,7 @@ export function ReRunPlayer() {
               const isSelected = answeringOption === option.id;
               const showCorrect = answerRevealed && option.isCorrect;
               return <button key={option.id} autoFocus={index === 0} className={isSelected || showCorrect ? `is-selected ${option.isCorrect ? "is-correct" : "is-wrong"}` : ""} disabled={Boolean(answeringOption) || answerRevealed} onClick={() => choose(option.id)}><span>{String.fromCharCode(65 + index)}</span><b>{option.text}</b>{isSelected && !answerRevealed && <em>ANSWER LOCKED</em>}{showCorrect && <em>CORRECT ANSWER</em>}</button>;
-            })}</div>{answerRevealed && <div className="answer-reveal" role="status"><strong>{wrongAttempt?.correctAnswer} is correct.</strong><span>{wrongAttempt?.explanation}</span><button className="continue-with-answer" onClick={continueWithAnswer}>Continue with answer ▶</button></div>}</section></>}{(isOutcome ? narration === "complete" : !rewindPlayback) && (!isBeat || !beatRevealed) && !isCliffhanger && !paused && <button onClick={continueLesson} className="continue">{isOutcome ? "Rewind & retry" : narration === "loading" || narration === "playing" || narration === "fallback" ? "Skip line" : hasMoreLesson ? "Next clue" : "Continue"} ▶</button>}{isCliffhanger && <section className="cliffhanger"><p>TO BE CONTINUED</p><h2>{episode.cliffhanger.teaser}</h2><span>Next episode airs in {episode.cliffhanger.airsAfterHours} hours</span><button onClick={() => setScreen("guide")}>See TV guide</button></section>}<p className="ai-voice-note">Narration available without an API key · captions carry all essential feedback</p></div>}
+            })}</div>{answerRevealed && <div className="answer-reveal" role="status"><strong>{wrongAttempt?.correctAnswer} is correct.</strong><span>{wrongAttempt?.explanation}</span><button className="continue-with-answer" onClick={continueWithAnswer}>Continue with answer ▶</button></div>}</section></>}{isOutcome && narration === "complete" && !paused && <button onClick={continueLesson} className="continue">Rewind & retry ▶</button>}{isCliffhanger && <section className="cliffhanger"><p>TO BE CONTINUED</p><h2>{episode.cliffhanger.teaser}</h2><span>Next episode airs in {episode.cliffhanger.airsAfterHours} hours</span><button onClick={() => setScreen("guide")}>See TV guide</button></section>}<p className="ai-voice-note">Narration available without an API key · captions carry all essential feedback</p></div>}
             {screen === "guide" && <div className="guide-screen"><ScreenHeader channel={episode.channel} right={isDemoEpisode ? "DEMO PLAYLIST" : "YOUR SAVED EPISODES"} /><div className="guide-body"><p className="eyebrow">TV GUIDE</p><h2>Next on ReRun</h2><div className="guide-row"><b>{channelLabel(episode.channel)}</b><span>{episode.title}</span><i>WATCHED</i></div>{guideEpisodes.map((entry, index) => <button key={entry.id} className="guide-row guide-row-action" onClick={() => entry.kind === "demo" ? loadDemo(entry.show) : loadCachedEpisode(entry.episode)}><b>{channelLabel(entry.kind === "demo" ? entry.show.episode.channel : entry.episode.channel)}</b><span>{entry.title}</span><i>{index === 0 ? "WATCH NEXT" : "WATCH"}</i></button>)}{!isDemoEpisode && guideEpisodes.length === 0 && <div className="guide-empty"><p>No other saved episode is waiting.</p><button className="primary" onClick={() => setScreen("ingest")}>Generate a new episode</button></div>}<div className="guide-actions"><button className="primary" onClick={() => isDemoEpisode && activeDemoShow ? loadDemo(activeDemoShow) : loadCachedEpisode(episode)}>Watch again</button><button className="secondary" onClick={goHome}>← Return home</button></div></div></div>}
             {notice && <p className="notice" role="status">{notice}</p>}
           </div>
@@ -984,15 +984,33 @@ function sceneNarration(scene: Scene) {
   return scene.line ?? scene.beat?.question ?? "";
 }
 
+const exportHostByTheme: Record<string, { idle: string; talk: string }> = {
+  "retro-sci-fi": { idle: "/assets/motion/photon-frontier-idle.png", talk: "/assets/motion/photon-frontier-talk.png" },
+  noir: { idle: "/assets/motion/cellular-casefile-idle.png", talk: "/assets/motion/cellular-casefile-talk.png" },
+  "power-squad": { idle: "/assets/motion/power-up-plant-lab-idle.png", talk: "/assets/motion/power-up-plant-lab-talk.png" },
+  "cozy-preschool": { idle: "/assets/motion/tiny-lightkeepers-idle.png", talk: "/assets/motion/tiny-lightkeepers-talk.png" },
+  "neon-quest": { idle: "/assets/motion/chloroplast-quest-idle.png", talk: "/assets/motion/chloroplast-quest-talk.png" },
+};
+
+function exportHostFor(episode: EpisodeSpec) {
+  const demoHost = demoShows.find((show) => show.episode.episodeId === episode.episodeId)?.art.host;
+  if (demoHost) return demoHost;
+  return exportHostByTheme[episode.theme?.id ?? ""] ?? {
+    idle: "/assets/motion/professor-paws-flat-idle.png",
+    talk: "/assets/motion/professor-paws-flat-talk.png",
+  };
+}
+
 async function downloadGeneratedShowVideo(episode: EpisodeSpec, onProgress: (message: string) => void) {
   const scenes = canonicalCut(episode);
   const artwork = await loadLiveEpisodeArt(episode.episodeId, scenes.map((scene) => scene.id), GENERATED_EPISODE_TTL_MS);
   if (scenes.some((scene) => !artwork[scene.id])) throw new Error("Finish illustrating this show before downloading its video.");
 
   onProgress("Preparing video scenes…");
+  const host = exportHostFor(episode);
   const [hostIdle, hostTalk, ...sceneImages] = await Promise.all([
-    loadImage("/assets/motion/professor-paws-flat-idle.png"),
-    loadImage("/assets/motion/professor-paws-flat-talk.png"),
+    loadImage(host.idle),
+    loadImage(host.talk),
     ...scenes.map((scene) => loadImage(artwork[scene.id])),
   ]);
   const canvas = document.createElement("canvas");
@@ -1011,7 +1029,7 @@ async function downloadGeneratedShowVideo(episode: EpisodeSpec, onProgress: (mes
   context.imageSmoothingQuality = "high";
 
   const audioContext = new AudioContext();
-  const voiceTheme = episode.theme ?? defaultTheme;
+  const voiceTheme = narrationThemeFor(episode.theme);
   onProgress("Generating narration track…");
   const narration = await Promise.all(scenes.map(async (scene) => {
     const response = await fetch("/api/tts", {
@@ -1111,16 +1129,19 @@ async function downloadGeneratedShowVideo(episode: EpisodeSpec, onProgress: (mes
   requestAnimationFrame(paint);
   await complete;
   await audioContext.close();
-  onProgress("Encoding high-quality MP4…");
+  onProgress("Encoding a downloadable video…");
   const intermediate = new Blob(chunks, { type: mimeType || "video/webm" });
   const form = new FormData();
   form.append("video", intermediate, "rerun-broadcast.webm");
   const encodedResponse = await fetch("/api/video-export", { method: "POST", body: form });
   if (!encodedResponse.ok) throw new Error((await encodedResponse.json().catch(() => ({ error: "MP4 encoding failed." }))).error);
-  const url = URL.createObjectURL(await encodedResponse.blob());
+  const encodedBlob = await encodedResponse.blob();
+  const outputType = encodedResponse.headers.get("content-type") ?? encodedBlob.type;
+  const extension = outputType.includes("mp4") ? "mp4" : "webm";
+  const url = URL.createObjectURL(encodedBlob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `${episode.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "rerun-show"}.mp4`;
+  link.download = `${episode.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "rerun-show"}.${extension}`;
   link.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }

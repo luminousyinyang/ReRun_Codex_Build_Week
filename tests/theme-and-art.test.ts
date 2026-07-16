@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { zodTextFormat } from "openai/helpers/zod";
 import { demoEpisode, demoShows, episodeResponseSchema, episodeSchema, validateLiveEpisode } from "@/lib/episode";
 import { buildSceneArtPrompt, makeSceneArtKey, sceneArtRequestSchema } from "@/lib/scene-art";
-import { defaultTheme, getPresetTheme, normalizeCustomVoiceDirection, showThemePresets, showThemeSchema, supportedTtsVoices } from "@/lib/theme";
+import { defaultTheme, getPresetTheme, narrationThemeFor, normalizeCustomVoiceDirection, showThemePresets, showThemeSchema, supportedTtsVoices } from "@/lib/theme";
 
 describe("theme and art contracts", () => {
   it("keeps the demo episode valid with a normalized theme", () => {
@@ -98,6 +98,12 @@ describe("theme and art contracts", () => {
     expect(new Set(showThemePresets.map((theme) => theme.voiceInstruction)).size).toBe(showThemePresets.length);
     expect(defaultTheme.voice).toBe("cedar");
     expect(() => showThemeSchema.parse({ ...defaultTheme, voice: "unapproved-voice" })).toThrow();
+  });
+
+  it("uses a natural narrator for legacy shows and the retro-sci-fi preset", () => {
+    expect(narrationThemeFor().voice).toBe("coral");
+    expect(narrationThemeFor(defaultTheme).voice).toBe("coral");
+    expect(narrationThemeFor(defaultTheme).voiceInstruction).toMatch(/natural human/i);
   });
 
   it("compiles custom voice direction from normalized theme metadata", () => {

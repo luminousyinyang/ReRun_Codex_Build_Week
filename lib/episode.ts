@@ -7,7 +7,6 @@ const optionSchema = z.object({
   id: z.string().min(1),
   text: z.string().min(1),
   isCorrect: z.boolean(),
-  misconceptionKey: z.string().min(1).optional(),
 });
 
 export const teachRoles = ["hook", "define", "analogy", "example", "contrast", "recap"] as const;
@@ -67,7 +66,7 @@ export const episodeBaseSchema = z.object({
   difficulty: z.number().int().min(1).max(5),
   theme: showThemeSchema.optional(),
   learningObjectives: z.array(z.object({ id: z.string(), conceptKey: z.string(), text: z.string() })).min(1),
-  cast: z.array(z.object({ id: z.string(), name: z.string(), persona: z.string(), voice: z.string().optional(), spriteRef: z.string().optional() })).min(1),
+  cast: z.array(z.object({ id: z.string(), name: z.string(), persona: z.string(), voice: z.string().optional() })).min(1),
   scenes: z.array(sceneSchema).min(1),
   cliffhanger: z.object({ teaser: z.string(), airsAfterHours: z.number().positive() }),
 });
@@ -82,7 +81,6 @@ const structuredOptionSchema = z.object({
   id: z.string().min(1),
   text: z.string().min(1),
   isCorrect: z.boolean(),
-  misconceptionKey: z.string().min(1).nullable(),
 });
 
 const structuredBeatSchema = z.object({
@@ -132,7 +130,7 @@ export const episodeResponseSchema = z.object({
   difficulty: z.number().int().min(1).max(5),
   theme: z.null(),
   learningObjectives: z.array(z.object({ id: z.string(), conceptKey: z.string(), text: z.string() })).min(1),
-  cast: z.array(z.object({ id: z.string(), name: z.string(), persona: z.string(), voice: z.string().nullable(), spriteRef: z.string().nullable() })).min(1),
+  cast: z.array(z.object({ id: z.string(), name: z.string(), persona: z.string(), voice: z.string().nullable() })).min(1),
   scenes: z.array(structuredSceneSchema).min(1),
   cliffhanger: z.object({ teaser: z.string(), airsAfterHours: z.number().positive() }),
 });
@@ -470,7 +468,7 @@ function narrativeSupport(line: string) {
     line,
     deepDive: `${line} Look for the detail that makes this moment matter.`,
     simpler: `Think of it as one small step in the story: ${line}`,
-    simplerAgain: "Keep the next move simple, then continue the broadcast.",
+    simplerAgain: `Hold onto this broadcast clue: ${line}`,
   };
 }
 
@@ -499,7 +497,7 @@ function buildPilot(pilot: Pilot): DemoShow {
         difficulty: level,
         reviewsConcepts: beat.reviewsConcepts,
         assessmentKind: lesson.assessmentKind,
-        options: beat.options.map((text, index) => ({ id: `${beat.key}-${index + 1}`, text, isCorrect: index === beat.correct, ...(index === beat.correct ? {} : { misconceptionKey: `${beat.key}-misconception-${index + 1}` }) })),
+        options: beat.options.map((text, index) => ({ id: `${beat.key}-${index + 1}`, text, isCorrect: index === beat.correct })),
         onCorrect,
         onIncorrect: `outcome-${beat.key}`,
       },
