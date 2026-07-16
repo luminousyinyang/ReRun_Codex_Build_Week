@@ -4,7 +4,7 @@
 
 1. Start the application with no environment variables.
 2. Power on the television and choose **Browse 5 demo shows**.
-3. Choose **The Photon Frontier** (circuits and Ohm's law) and complete its topic-specific recap.
+3. Choose **The Circuit Frontier** (circuits and Ohm's law) and complete its topic-specific recap.
 4. Watch the first question's teaching phase. Confirm the host presents each short step before choices appear, captions match the current step, and any key-term/formula lower-third stays visible while that step is on air.
 5. Confirm **Autoplay ON**. After instruction, watch a normal narrative scene: an “Up next” affordance appears and advances only after the 1.6-second dwell.
 6. At the first graded question, choose a distractor to see its supportive incorrect-answer consequence. The player must not auto-advance this outcome.

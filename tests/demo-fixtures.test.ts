@@ -9,10 +9,10 @@ type RoundSixBeat = NonNullable<EpisodeSpec["scenes"][number]["beat"]> & {
 };
 
 const expectedLibrary = {
-  "photon-frontier": { title: "The Photon Frontier", difficulty: 3 },
+  "photon-frontier": { title: "The Circuit Frontier", difficulty: 3 },
   "cellular-casefile": { title: "The Cellular Casefile", difficulty: 3 },
-  "power-up-plant-lab": { title: "Power-Up Plant Lab", difficulty: 2 },
-  "tiny-lightkeepers": { title: "The Tiny Lightkeepers", difficulty: 1 },
+  "power-up-plant-lab": { title: "The Force Squad", difficulty: 2 },
+  "tiny-lightkeepers": { title: "The Raindrop Trail", difficulty: 1 },
   "chloroplast-quest": { title: "The Chloroplast Quest", difficulty: 4 },
 } as const;
 
