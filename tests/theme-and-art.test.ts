@@ -19,7 +19,7 @@ describe("theme and art contracts", () => {
     expect(demoShows).toHaveLength(5);
     expect(new Set(demoShows.map((show) => show.theme.id)).size).toBe(5);
     expect(demoShows.every((show) => episodeSchema.safeParse(show.episode).success)).toBe(true);
-    expect(demoShows.every((show) => show.episode.scenes.length === 21)).toBe(true);
+    expect(demoShows.every((show) => show.episode.scenes.length === 15)).toBe(true);
     expect(new Set(demoShows.map((show) => show.episode.learningObjectives.map((objective) => objective.conceptKey).join(","))).size).toBe(5);
   });
 
@@ -37,6 +37,36 @@ describe("theme and art contracts", () => {
         expect(outcome?.next).toBe(scene.id);
       }
     }
+  });
+
+  it("requires live teaching before every assessment and a worked method for compute checks", () => {
+    const valid = structuredClone(demoEpisode);
+    valid.scenes[0].recap = [{
+      prompt: "Which molecule carries ready-to-use cell energy?",
+      answers: ["ATP"],
+      conceptKey: "cell.atp",
+    }];
+    expect(() => validateLiveEpisode(valid, "ATP is a cell's ready-to-use energy carrier.")).not.toThrow();
+
+    const missingTeach = structuredClone(valid);
+    const firstBeat = missingTeach.scenes.find((scene) => scene.beat)!;
+    firstBeat.teach = firstBeat.teach?.slice(0, 2);
+    expect(() => validateLiveEpisode(missingTeach, "ATP is a cell's ready-to-use energy carrier.")).toThrow(/three teaching steps/i);
+
+    const missingComputeMethod = structuredClone(valid);
+    const computeBeat = missingComputeMethod.scenes.find((scene) => scene.beat?.assessmentKind === "compute")!;
+    computeBeat.workedExample = computeBeat.workedExample?.slice(0, 2);
+    expect(() => validateLiveEpisode(missingComputeMethod, "ATP is a cell's ready-to-use energy carrier.")).toThrow(/worked example/i);
+
+    const unsupportedConcept = structuredClone(valid);
+    const supportedBeat = unsupportedConcept.scenes.find((scene) => scene.beat)!;
+    supportedBeat.teachesConcepts = [...(supportedBeat.beat!.reviewsConcepts ?? []), "not-an-episode-objective"];
+    expect(() => validateLiveEpisode(unsupportedConcept, "ATP is a cell's ready-to-use energy carrier.")).toThrow(/unknown concept/i);
+
+    const repeatedRewindCopy = structuredClone(valid);
+    const teachingBeat = repeatedRewindCopy.scenes.find((scene) => scene.beat)!;
+    teachingBeat.simpler = teachingBeat.line;
+    expect(() => validateLiveEpisode(repeatedRewindCopy, "ATP is a cell's ready-to-use energy carrier.")).toThrow(/repeats/i);
   });
 
   it("requires a live recap answer grounded in the supplied notes", () => {

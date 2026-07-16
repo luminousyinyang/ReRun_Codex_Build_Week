@@ -6,7 +6,7 @@ ReRun makes the learner a necessary cast member in an educational TV show. The e
 
 ## Format thesis
 
-AI study podcasts can turn notes into an audio-first review experience. ReRun addresses the complementary visual, interactive gap: it turns source material into a television episode where a learner sees ideas in context, participates in the plot, and receives a narrative consequence or simpler re-explanation.
+AI study podcasts can turn notes into an audio-first review experience. ReRun addresses the complementary visual, interactive gap: it turns source material into a television episode where a learner sees ideas in context, receives a short learner-paced explanation before each check, participates in the plot, and receives a narrative consequence or simpler re-explanation.
 
 ReRun is not a passive video generator and does not claim that visual study is superior for every learner. Its P0 promise is narrower and demonstrable: active retrieval, accurate corrective feedback, and adaptive re-explanation inside an original visual narrative.
 
@@ -24,8 +24,8 @@ ReRun is study support, not assessment certification, professional advice, or a 
 1. Learner powers on a CRT in a dim room.
 2. They load the bundled demo or paste short notes.
 3. A “Please Stand By” state presents a recap while an optional live episode is generated.
-4. CH 03 begins; a character pauses at a question beat.
-5. The learner answers, sees accurate feedback, and reaches a cliffhanger/review time.
+4. CH 03 begins; a character presents a short hook/definition/example-or-analogy/contrast teaching sequence, with a durable key-term or formula lower-third where useful.
+5. The show pauses at a question beat only after that sequence; the learner answers, sees accurate feedback, and reaches a cliffhanger/review time.
 
 ### Incorrect-answer recovery
 
@@ -36,7 +36,7 @@ ReRun is study support, not assessment certification, professional advice, or a 
 
 ## Learning-design rules
 
-- Every P0 beat asks for retrieval; no scene advances solely by passive watching.
+- Every P0 beat asks for retrieval only after a short teaching sequence; no check relies on a wrong-answer correction as its first explanation.
 - Corrections identify the conceptual distinction and remain faithful to source material.
 - Rewind changes reading level and analogy, not factual content.
 - Commercial questions draw on previously introduced concepts when data is available.
@@ -44,7 +44,7 @@ ReRun is study support, not assessment certification, professional advice, or a 
 
 ## MVP acceptance criteria
 
-- First interactive beat appears in demo mode without external calls.
+- The first teaching sequence and interactive beat appear in demo mode without external calls.
 - The episode has at least three question opportunities, one consequence branch, one variant re-ask, one commercial review, and one cliffhanger.
 - Captions are available by default; sound is optional; controls work with keyboard and touch.
 - A live-mode failure surfaces a readable “technical difficulties” explanation and a demo launch action.

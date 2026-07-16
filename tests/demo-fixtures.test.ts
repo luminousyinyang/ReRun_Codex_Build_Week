@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { demoShows, episodeSchema, type EpisodeSpec } from "@/lib/episode";
 
-type RoundFiveBeat = NonNullable<EpisodeSpec["scenes"][number]["beat"]> & {
+type RoundSixBeat = NonNullable<EpisodeSpec["scenes"][number]["beat"]> & {
   simplerQuestion?: string;
   difficulty?: number;
   reviewsConcepts?: string[];
+  assessmentKind?: "conceptual" | "compute";
 };
 
 const expectedLibrary = {
@@ -36,7 +37,7 @@ function reachableIds(episode: EpisodeSpec) {
   return visited;
 }
 
-describe("Round 5 bundled demo fixtures", () => {
+describe("Round 6 bundled demo fixtures", () => {
   it("ships the five planned independent pilots at their planned difficulty", () => {
     expect(demoShows).toHaveLength(5);
     expect(Object.fromEntries(demoShows.map((show) => [show.id, {
@@ -47,10 +48,10 @@ describe("Round 5 bundled demo fixtures", () => {
     expect(new Set(demoShows.map((show) => show.episode.scenes[0]?.recap?.[0]?.prompt)).size).toBe(5);
   });
 
-  it("makes every pilot a valid, reachable 21-scene three-act learning story", () => {
+  it("makes every pilot a valid, reachable 15-scene three-act learning story", () => {
     for (const { episode } of demoShows) {
       expect(episodeSchema.safeParse(episode).success).toBe(true);
-      expect(episode.scenes).toHaveLength(21);
+      expect(episode.scenes).toHaveLength(15);
       expect(episode.scenes[0]).toMatchObject({ id: "recap", type: "recap" });
       expect(episode.scenes.at(-1)).toMatchObject({ type: "cliffhanger" });
       expect(episode.learningObjectives).toHaveLength(3);
@@ -82,13 +83,44 @@ describe("Round 5 bundled demo fixtures", () => {
     }
   });
 
-  it("authors simpler questions and deliberate own-concept retrieval", () => {
+  it("teaches each concept once, then re-tests without re-lecturing", () => {
     for (const { episode } of demoShows) {
       const conceptKeys = new Set(episode.learningObjectives.map((objective) => objective.conceptKey));
       const beats = episode.scenes.filter((scene) => scene.beat);
-      const roundFiveBeats = beats.map((scene) => ({ scene, beat: scene.beat as RoundFiveBeat }));
+      const roundSixBeats = beats.map((scene) => ({ scene, beat: scene.beat as RoundSixBeat }));
 
-      for (const { beat } of roundFiveBeats) {
+      const taught = new Set<string>();
+      for (const { scene, beat } of roundSixBeats) {
+        const introduces = (beat.reviewsConcepts ?? []).some((key) => !taught.has(key));
+        for (const key of beat.reviewsConcepts ?? []) taught.add(key);
+
+        if (introduces) {
+          // First exposure to a concept: teach it in full, once.
+          expect(scene.teach!.length).toBeGreaterThanOrEqual(3);
+          expect(scene.teach!.every((step) => step.text.trim().length > 0)).toBe(true);
+          expect(scene.teach!.some((step) => step.role === "hook" || step.role === "define")).toBe(true);
+          expect(scene.teach!.some((step) => step.role === "analogy" || step.role === "example")).toBe(true);
+          expect(scene.teach!.some((step) => step.role === "contrast")).toBe(true);
+          expect(scene.teach!.some((step) => step.onScreen?.trim())).toBe(true);
+        } else if (beat.assessmentKind === "compute") {
+          // Re-test that adds a genuinely new skill (a calculation): brief setup, no re-lecture.
+          expect(scene.teach?.length ?? 0).toBeLessThanOrEqual(1);
+        } else {
+          // Pure spaced retrieval / integration: no re-teaching of already-taught concepts.
+          expect(scene.teach ?? []).toHaveLength(0);
+        }
+
+        expect(scene.teachesConcepts?.length).toBeGreaterThan(0);
+        expect(scene.teachesConcepts?.every((key) => conceptKeys.has(key))).toBe(true);
+        expect(beat.reviewsConcepts?.every((key) => scene.teachesConcepts?.includes(key))).toBe(true);
+        expect(beat.assessmentKind).toMatch(/^(conceptual|compute)$/);
+        if (beat.assessmentKind === "compute") {
+          expect(scene.workedExample?.length).toBeGreaterThanOrEqual(3);
+          expect(scene.workedExample?.some((step) => step.role === "example")).toBe(true);
+        } else {
+          expect(scene.workedExample).toBeUndefined();
+        }
+        expect(new Set([scene.line, scene.deepDive, scene.simpler, scene.simplerAgain].map((line) => line?.trim().toLocaleLowerCase()))).toHaveLength(4);
         expect(beat.simplerQuestion?.trim()).toBeTruthy();
         expect(beat.simplerQuestion?.trim()).not.toBe(beat.question.trim());
         expect(beat.difficulty).toBeGreaterThanOrEqual(1);
@@ -97,18 +129,7 @@ describe("Round 5 bundled demo fixtures", () => {
         expect(beat.reviewsConcepts?.every((key) => conceptKeys.has(key))).toBe(true);
       }
 
-      const actOneConcepts = new Set(
-        roundFiveBeats
-          .filter(({ scene }) => episode.scenes.indexOf(scene) < 5)
-          .flatMap(({ beat }) => beat.reviewsConcepts ?? []),
-      );
-      const actTwoBeats = roundFiveBeats.filter(({ scene }) => {
-        const index = episode.scenes.indexOf(scene);
-        return index >= 5 && index < 11;
-      });
-      expect(actTwoBeats.some(({ beat }) => beat.reviewsConcepts?.some((key) => actOneConcepts.has(key)))).toBe(true);
-
-      const finale = roundFiveBeats.at(-1)?.beat;
+      const finale = roundSixBeats.at(-1)?.beat;
       expect(finale?.reviewsConcepts).toEqual(expect.arrayContaining([...conceptKeys]));
     }
   });

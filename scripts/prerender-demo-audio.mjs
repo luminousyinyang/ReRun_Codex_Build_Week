@@ -32,8 +32,11 @@ const vite = await createServer({
 const { collectDemoNarrationTracks } = await vite.ssrLoadModule("/lib/demo-narration-catalog.ts");
 const tracks = collectDemoNarrationTracks();
 await vite.close();
+console.log(`Preparing ${tracks.length} demo narration tracks.`);
 const audioDir = join(root, "public/assets/audio");
 const entries = {};
+const manifestOnly = process.argv.includes("--manifest-only");
+const missing = [];
 await mkdir(audioDir, { recursive: true });
 
 for (const { key, line, voice, showId } of tracks) {
@@ -45,7 +48,12 @@ for (const { key, line, voice, showId } of tracks) {
     }
   } catch {
     // Render missing files below. This makes interrupted batches resumable.
+    if (manifestOnly) {
+      missing.push(filename);
+      continue;
+    }
   }
+  if (manifestOnly) throw new Error(`Missing local narration track: ${filename}`);
   const response = await fetch("https://api.openai.com/v1/audio/speech", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
@@ -55,6 +63,8 @@ for (const { key, line, voice, showId } of tracks) {
   await writeFile(join(audioDir, filename), Buffer.from(await response.arrayBuffer()));
   entries[key] = filename;
 }
+
+if (manifestOnly && missing.length) throw new Error(`Missing ${missing.length} local narration tracks: ${missing.join(", ")}`);
 
 const manifest = { version: 1, entries };
 await writeFile(join(audioDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);

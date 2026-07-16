@@ -10,6 +10,15 @@ const optionSchema = z.object({
   misconceptionKey: z.string().min(1).optional(),
 });
 
+export const teachRoles = ["hook", "define", "analogy", "example", "contrast", "recap"] as const;
+
+const teachStepSchema = z.object({
+  role: z.enum(teachRoles),
+  text: z.string().min(1),
+  /** A durable, caption-adjacent key term or formula for the current scene. */
+  onScreen: z.string().min(1).optional(),
+});
+
 const beatSchema = z.object({
   kind: z.literal("mcq"),
   question: z.string().min(1),
@@ -19,6 +28,8 @@ const beatSchema = z.object({
   difficulty: z.number().int().min(1).max(5).optional(),
   /** Concepts deliberately retrieved or integrated by this question. */
   reviewsConcepts: z.array(z.string().min(1)).min(1).optional(),
+  /** Lets live validation require a worked method for numerical application. */
+  assessmentKind: z.enum(["conceptual", "compute"]).optional(),
   options: z.array(optionSchema).min(2).max(4),
   onCorrect: z.string().min(1),
   onIncorrect: z.string().min(1),
@@ -34,6 +45,12 @@ export const sceneSchema = z.object({
   deepDive: z.string().min(1).optional(),
   simpler: z.string().min(1).optional(),
   simplerAgain: z.string().min(1).optional(),
+  /** Learner-paced explanation steps, shown before this scene's question. */
+  teach: z.array(teachStepSchema).min(1).optional(),
+  /** A method demonstration shown after `teach` and before a compute question. */
+  workedExample: z.array(teachStepSchema).min(1).optional(),
+  /** Objective keys made explicit by this scene's instruction. */
+  teachesConcepts: z.array(z.string().min(1)).min(1).optional(),
   next: z.string().min(1).nullable().optional(),
   recap: z.array(z.object({ prompt: z.string(), answers: z.array(z.string()).min(1), conceptKey: z.string() })).optional(),
   beat: beatSchema.optional(),
@@ -74,9 +91,16 @@ const structuredBeatSchema = z.object({
   simplerQuestion: z.string().min(1).nullable(),
   difficulty: z.number().int().min(1).max(5).nullable(),
   reviewsConcepts: z.array(z.string().min(1)).min(1).nullable(),
+  assessmentKind: z.enum(["conceptual", "compute"]).nullable(),
   options: z.array(structuredOptionSchema).min(2).max(4),
   onCorrect: z.string().min(1),
   onIncorrect: z.string().min(1),
+});
+
+const structuredTeachStepSchema = z.object({
+  role: z.enum(teachRoles),
+  text: z.string().min(1),
+  onScreen: z.string().min(1).nullable(),
 });
 
 const structuredSceneSchema = z.object({
@@ -89,6 +113,9 @@ const structuredSceneSchema = z.object({
   deepDive: z.string().min(1).nullable(),
   simpler: z.string().min(1).nullable(),
   simplerAgain: z.string().min(1).nullable(),
+  teach: z.array(structuredTeachStepSchema).min(1).nullable(),
+  workedExample: z.array(structuredTeachStepSchema).min(1).nullable(),
+  teachesConcepts: z.array(z.string().min(1)).min(1).nullable(),
   next: z.string().min(1).nullable(),
   recap: z.array(z.object({ prompt: z.string(), answers: z.array(z.string()).min(1), conceptKey: z.string() })).nullable(),
   beat: structuredBeatSchema.nullable(),
@@ -203,14 +230,13 @@ export function validateLiveEpisode(value: unknown, sourceNotes: string): Episod
  * refusing a thin or unsafe new generation before the player receives it.
  */
 export function validateLiveEpisodeStructure(episode: EpisodeSpec) {
-  if (episode.scenes.length !== 21) throw new Error("Generated episode must contain exactly 21 scenes.");
+  if (episode.scenes.length < 12 || episode.scenes.length > 22) throw new Error("Generated episode must contain between 12 and 22 scenes.");
   const sceneTypeCount = (type: Scene["type"]) => episode.scenes.filter((scene) => scene.type === type).length;
-  if (sceneTypeCount("recap") !== 1 || sceneTypeCount("commercial") !== 1 || sceneTypeCount("cliffhanger") !== 1) {
-    throw new Error("Generated episode must contain one recap, one commercial review, and one cliffhanger.");
+  if (sceneTypeCount("recap") !== 1 || sceneTypeCount("cliffhanger") !== 1) {
+    throw new Error("Generated episode must contain one recap and one cliffhanger.");
   }
-  const narrativeIndexes = episode.scenes.flatMap((scene, index) => scene.type === "narrative" ? [index] : []);
-  if (![0, 1, 2].every((act) => narrativeIndexes.some((index) => index >= act * 7 && index < (act + 1) * 7))) {
-    throw new Error("Generated episode must include a narrative setup in each of three acts.");
+  if (sceneTypeCount("narrative") < 3) {
+    throw new Error("Generated episode must include a short narrative setup for each act.");
   }
 
   const objectiveKeys = new Set(episode.learningObjectives.map((objective) => objective.conceptKey));
@@ -219,6 +245,20 @@ export function validateLiveEpisodeStructure(episode: EpisodeSpec) {
   }
   const beats = episode.scenes.filter((scene) => scene.beat);
   if (beats.length < 3) throw new Error("Generated episode must contain at least three primary MCQ beats.");
+  const sceneById = new Map(episode.scenes.map((scene) => [scene.id, scene]));
+  const successPath: Scene[] = [];
+  const visited = new Set<string>();
+  let cursor = sceneById.get("recap");
+  while (cursor && !visited.has(cursor.id)) {
+    successPath.push(cursor);
+    visited.add(cursor.id);
+    const successor = cursor.beat?.onCorrect ?? cursor.next;
+    cursor = successor ? sceneById.get(successor) : undefined;
+  }
+  if (!successPath.some((scene) => scene.type === "cliffhanger")) throw new Error("Generated episode needs a canonical success path to its cliffhanger.");
+
+  const normalize = (value: string) => value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+  const taughtSoFar = new Set<string>();
   for (const scene of beats) {
     const beat = scene.beat!;
     if (!beat.simplerQuestion || beat.simplerQuestion.trim().toLocaleLowerCase() === beat.question.trim().toLocaleLowerCase()) {
@@ -229,6 +269,34 @@ export function validateLiveEpisodeStructure(episode: EpisodeSpec) {
     }
     if (beat.reviewsConcepts.some((concept) => !objectiveKeys.has(concept))) {
       throw new Error(`Beat ${scene.id} reviews a concept that is not taught by this episode.`);
+    }
+    if (beat.assessmentKind !== "conceptual" && beat.assessmentKind !== "compute") {
+      throw new Error(`Beat ${scene.id} needs an assessmentKind.`);
+    }
+    // A beat that first introduces a concept must teach it in full. Later beats
+    // re-test already-taught concepts and must NOT re-lecture (spaced practice).
+    const introducesConcept = beat.reviewsConcepts.some((concept) => !taughtSoFar.has(concept));
+    for (const concept of beat.reviewsConcepts) taughtSoFar.add(concept);
+    if (introducesConcept && (!scene.teach || scene.teach.length < 3)) {
+      throw new Error(`Beat ${scene.id} needs at least three teaching steps before its question.`);
+    }
+    if (!scene.teachesConcepts || beat.reviewsConcepts.some((concept) => !scene.teachesConcepts!.includes(concept))) {
+      throw new Error(`Beat ${scene.id} must name every concept it teaches before assessment.`);
+    }
+    if (scene.teachesConcepts.some((concept) => !objectiveKeys.has(concept))) {
+      throw new Error(`Scene ${scene.id} teaches an unknown concept key.`);
+    }
+    if (beat.assessmentKind === "compute") {
+      if (!scene.workedExample || scene.workedExample.length < 3 || !scene.workedExample.some((step) => step.role === "example")) {
+        throw new Error(`Compute beat ${scene.id} needs a worked example before its question.`);
+      }
+    }
+    if (!scene.line || !scene.deepDive || !scene.simpler || !scene.simplerAgain) {
+      throw new Error(`Teaching scene ${scene.id} needs summary, deep-dive, and two rewind takes.`);
+    }
+    const versions = [scene.line, scene.deepDive, scene.simpler, scene.simplerAgain].map(normalize);
+    if (new Set(versions).size !== versions.length) {
+      throw new Error(`Teaching scene ${scene.id} repeats a summary, deep-dive, or rewind take.`);
     }
     const outcome = episode.scenes.find((candidate) => candidate.id === beat.onIncorrect);
     if (!outcome || outcome.type !== "branch_outcome" || !outcome.refutation || !outcome.next) {
@@ -243,10 +311,9 @@ export function validateLiveEpisodeStructure(episode: EpisodeSpec) {
   if (Array.from(objectiveKeys).some((concept) => !reviewed.has(concept))) {
     throw new Error("Generated episode must assess every taught concept.");
   }
-  const firstActConcepts = beats[0].beat!.reviewsConcepts ?? [];
-  const commercial = episode.scenes.find((scene) => scene.type === "commercial");
-  if (!commercial?.beat?.reviewsConcepts?.some((concept) => firstActConcepts.includes(concept))) {
-    throw new Error("Generated episode needs a commercial retrieval of an Act 1 concept.");
+  const taughtOnSuccessPath = new Set(successPath.flatMap((scene) => scene.teachesConcepts ?? []));
+  if (Array.from(objectiveKeys).some((concept) => !taughtOnSuccessPath.has(concept))) {
+    throw new Error("Generated episode must teach every objective on its canonical success path.");
   }
   const finalBeat = beats.at(-1)!;
   if (objectiveKeys.size !== finalBeat.beat!.reviewsConcepts?.length || Array.from(objectiveKeys).some((concept) => !finalBeat.beat!.reviewsConcepts?.includes(concept))) {
@@ -288,7 +355,97 @@ type Pilot = {
   beats: readonly [PilotBeat, PilotBeat, PilotBeat, PilotBeat, PilotBeat, PilotBeat];
 };
 
-function sceneCopy(line: string) {
+type TeachStep = { role: (typeof teachRoles)[number]; text: string; onScreen?: string };
+
+type ConceptTeachingProfile = {
+  hook: string;
+  definition: string;
+  analogy: string;
+  contrast: string;
+  onScreen: string;
+};
+
+const conceptTeaching: Record<string, ConceptTeachingProfile> = {
+  "circuits.voltage": { hook: "Your phone charger and a lightning bolt rely on the same hidden push. Let's name it.", definition: "Voltage is an energy difference that pushes electric charge through a complete circuit.", analogy: "Think of a water tower: higher water presses harder through a hose, like voltage pushes charge.", contrast: "Voltage is the push, not the moving charge. Moving charge is current.", onScreen: "VOLTAGE = push on charge" },
+  "circuits.current": { hook: "Flip a switch and something starts moving through the wire almost instantly. What is it?", definition: "Electric current is the movement of electric charge through a complete path.", analogy: "If voltage is the hill, current is the stream of balls rolling down it each second.", contrast: "Current is the flow; voltage supplies the push and resistance makes flow harder.", onScreen: "CURRENT = flow of charge" },
+  "circuits.ohms-law": { hook: "Engineers predict a circuit's current before they ever build it. Here's the rule that lets them.", definition: "Ohm's law links current, voltage, and resistance: current equals voltage divided by resistance.", analogy: "A narrow hallway slows a crowd; more resistance leaves less current for the same push.", contrast: "More resistance does not create current. At fixed voltage, it lowers current.", onScreen: "I = V ÷ R" },
+  "cell.nucleus": { hook: "Every cell carries a full instruction manual for the whole body. Where does it keep that manual safe?", definition: "The nucleus stores most of a eukaryotic cell's DNA instructions.", analogy: "It is the cell's protected filing room for the instruction manual.", contrast: "The nucleus stores instructions; it does not assemble proteins or make most ATP.", onScreen: "NUCLEUS = DNA instructions" },
+  "cell.mitochondria": { hook: "Moving, thinking, breathing — all of it needs energy nonstop. Which cell part keeps supplying it?", definition: "Mitochondria make much of a cell's ATP during cellular respiration.", analogy: "They are energy stations that recharge many small ATP batteries.", contrast: "Mitochondria supply much ATP; they are not the DNA archive or protein assembly line.", onScreen: "MITOCHONDRIA = ATP" },
+  "cell.ribosomes": { hook: "Cells are always building new proteins to grow and repair. Where does that assembly happen?", definition: "Ribosomes assemble proteins by linking amino acids together.", analogy: "They are tiny workbenches that follow instructions to build a protein.", contrast: "Ribosomes build proteins; they do not store DNA or specialize in ATP production.", onScreen: "RIBOSOMES = proteins" },
+  "forces.newton-first": { hook: "A hockey puck glides across smooth ice and just keeps going. What would it take to change that?", definition: "An object's motion changes only when forces are unbalanced, creating a nonzero net force.", analogy: "A tug-of-war stays still when both teams pull equally; motion changes when one side wins.", contrast: "Balanced does not mean no forces. It means the forces cancel.", onScreen: "NET FORCE 0 → no motion change" },
+  "forces.newton-second": { hook: "The same shove barely moves a truck but launches a light cart. Why the difference?", definition: "Newton's second law says net force causes acceleration, and F equals mass times acceleration.", analogy: "The same push changes a shopping cart more than a heavy truck because the truck has more mass.", contrast: "More force gives more acceleration only when mass stays the same.", onScreen: "F = m × a" },
+  "forces.newton-third": { hook: "A rocket in empty space has nothing to push against, yet it still flies. How?", definition: "For every force on one object, there is an equal and opposite force on another object.", analogy: "When you step off a skateboard, your foot pushes it back while it pushes you forward.", contrast: "The pair is equal but acts on two different objects, so it does not cancel on one object.", onScreen: "ACTION ↔ REACTION (two objects)" },
+  "water.evaporation": { hook: "A rain puddle vanishes on a sunny afternoon. Where did all that water actually go?", definition: "Evaporation is liquid water changing into water vapor, a gas.", analogy: "Sun-warmed puddle water can slip into the air one invisible molecule at a time.", contrast: "Evaporation rises into air; it does not turn water into ice or rain.", onScreen: "EVAPORATION: liquid → gas" },
+  "water.condensation": { hook: "A cold glass 'sweats' on a warm day, though nothing spilled. Where do those drops come from?", definition: "Condensation is water vapor cooling and changing into liquid droplets.", analogy: "Like breath making tiny drops on a cold window, cooling vapor gathers into droplets.", contrast: "Condensation makes droplets; evaporation makes vapor.", onScreen: "CONDENSATION: gas → liquid" },
+  "water.precipitation": { hook: "Clouds drift for days, then all at once it pours. What finally sends the water down?", definition: "Precipitation is water falling from clouds as rain, snow, sleet, or hail.", analogy: "When cloud droplets grow too heavy to stay aloft, gravity brings them back down.", contrast: "Precipitation falls; evaporation rises and condensation gathers cloud droplets.", onScreen: "PRECIPITATION = water falls" },
+  "photosynthesis.light-reactions": { hook: "A leaf turns sunlight into fuel. Where inside it does that very first step happen?", definition: "The light reactions use light in thylakoid membranes inside chloroplasts.", analogy: "Thylakoids are solar-panel rooms where chlorophyll catches light energy.", contrast: "Light reactions happen in thylakoids, not in the cell wall or nucleus.", onScreen: "LIGHT REACTIONS → thylakoids" },
+  "photosynthesis.water-splitting": { hook: "The oxygen in your next breath came from a plant tearing something apart. What?", definition: "During light reactions, water is split to replace electrons and releases oxygen.", analogy: "Water is a supply crate: its electrons keep the light system running while oxygen exits as a by-product.", contrast: "Water splitting releases oxygen; carbon dioxide is used later to build carbon compounds.", onScreen: "H₂O → electrons + O₂" },
+  "photosynthesis.calvin-setup": { hook: "Catching light is only the beginning. What does the plant make first, before any sugar?", definition: "ATP and NADPH from the light reactions provide energy and energized electrons for carbon fixation.", analogy: "They are charged delivery packs carried from the solar-panel room to the sugar-building workshop.", contrast: "ATP and NADPH support carbon fixation; oxygen is not their cargo and water is not their product.", onScreen: "ATP + NADPH → carbon fixation" },
+};
+
+function teachingFor(beat: PilotBeat, phase: "introduce" | "retrieve" | "review") {
+  const profiles = beat.reviewsConcepts.map((concept) => conceptTeaching[concept]).filter((profile): profile is ConceptTeachingProfile => Boolean(profile));
+  const primary = profiles[0];
+  if (!primary) throw new Error(`Missing teaching profile for ${beat.key}`);
+
+  const ruleKey = beat.key === "combine" && beat.reviewsConcepts.includes("circuits.ohms-law")
+    ? "circuits.ohms-law"
+    : beat.key === "combine" && beat.reviewsConcepts.includes("forces.newton-second")
+      ? "forces.newton-second"
+      : undefined;
+  const rule = ruleKey ? conceptTeaching[ruleKey] : undefined;
+  const workedExample = ruleKey === "circuits.ohms-law"
+    ? [
+        { role: "define" as const, text: "For a circuit calculation, start with Ohm's law: current equals voltage divided by resistance.", onScreen: "I = V ÷ R" },
+        { role: "example" as const, text: "Worked example: 12 volts through 6 ohms means I equals 12 divided by 6, so 2 amps flow.", onScreen: "12 V ÷ 6 Ω = 2 A" },
+        { role: "contrast" as const, text: "Name the units as you work: volts are the push, ohms resist flow, and amps measure current." },
+      ]
+    : ruleKey === "forces.newton-second"
+      ? [
+          { role: "define" as const, text: "For force problems, rearrange Newton's second law: acceleration equals net force divided by mass.", onScreen: "a = F ÷ m" },
+          { role: "example" as const, text: "Worked example: a 6-newton net force on a 2-kilogram cart gives 6 divided by 2, or 3 meters per second squared.", onScreen: "6 N ÷ 2 kg = 3 m/s²" },
+          { role: "contrast" as const, text: "Use net force, not just any single push, because net force is what changes the cart's motion." },
+        ]
+      : undefined;
+
+  // Teach a concept in full the FIRST time it appears; after that, don't re-lecture.
+  // Retrieval and conceptual-review beats are spaced practice — a short cue, then the
+  // question. A compute review introduces a genuinely new skill (the calculation), so
+  // it keeps a brief setup plus a worked example rather than repeating the concepts.
+  let teach: TeachStep[] | undefined;
+  let line: string;
+  if (phase === "introduce") {
+    teach = [
+      { role: "hook", text: primary.hook },
+      { role: "define", text: primary.definition, onScreen: primary.onScreen },
+      { role: "analogy", text: primary.analogy },
+      { role: "contrast", text: primary.contrast },
+    ];
+    line = `In one line — ${primary.onScreen}.`;
+  } else if (rule && workedExample) {
+    teach = [{ role: "hook", text: "New tool — turn what you already know into a quick calculation.", onScreen: rule.onScreen }];
+    line = "Your turn — run the numbers.";
+  } else if (phase === "retrieve") {
+    teach = undefined;
+    line = "Quick recall — no new notes, just answer from memory.";
+  } else {
+    teach = undefined;
+    line = beat.key === "finale" ? "Last one — the whole picture in a single answer." : "Here's where it all clicks into place.";
+  }
+
+  const focus = rule ?? primary;
+  return {
+    teach,
+    workedExample,
+    line,
+    deepDive: `${focus.definition} ${focus.contrast}`,
+    simpler: focus.analogy,
+    simplerAgain: `${focus.onScreen}.`,
+    assessmentKind: workedExample ? "compute" as const : "conceptual" as const,
+  };
+}
+
+function narrativeSupport(line: string) {
   return {
     line,
     deepDive: line,
@@ -299,31 +456,41 @@ function sceneCopy(line: string) {
 
 function buildPilot(pilot: Pilot): DemoShow {
   const theme = getPresetTheme(pilot.themeId);
-  const [conceptOne, conceptTwo, retrieval, conceptThree, integration, finale] = pilot.beats;
+  const [conceptOne, conceptTwo, , conceptThree, integration, finale] = pilot.beats;
   const objectives = pilot.objectives.map((objective, index) => ({ id: `lo-${index + 1}`, conceptKey: objective.key, text: objective.text }));
-  const makeBeat = (beat: PilotBeat, onCorrect: string, level: number, type: "beat" | "commercial" = "beat") => ({
-    id: `beat-${beat.key}`,
-    type,
-    background: `${pilot.subject}, decision moment: ${beat.key}`,
-    speaker: pilot.host,
-    ...sceneCopy(beat.line),
-    beat: {
-      kind: "mcq" as const,
-      question: beat.question,
-      simplerQuestion: beat.simplerQuestion,
-      difficulty: level,
-      reviewsConcepts: beat.reviewsConcepts,
-      options: beat.options.map((text, index) => ({ id: `${beat.key}-${index + 1}`, text, isCorrect: index === beat.correct, ...(index === beat.correct ? {} : { misconceptionKey: `${beat.key}-misconception-${index + 1}` }) })),
-      onCorrect,
-      onIncorrect: `outcome-${beat.key}`,
-    },
-  });
+  const makeBeat = (beat: PilotBeat, onCorrect: string, level: number, phase: "introduce" | "retrieve" | "review", type: "beat" | "commercial" = "beat") => {
+    const lesson = teachingFor(beat, phase);
+    return {
+      id: `beat-${beat.key}`,
+      type,
+      background: `${pilot.subject}, decision moment: ${beat.key}`,
+      speaker: pilot.host,
+      line: lesson.line,
+      deepDive: lesson.deepDive,
+      simpler: lesson.simpler,
+      simplerAgain: lesson.simplerAgain,
+      ...(lesson.teach ? { teach: lesson.teach } : {}),
+      ...(lesson.workedExample ? { workedExample: lesson.workedExample } : {}),
+      teachesConcepts: beat.reviewsConcepts,
+      beat: {
+        kind: "mcq" as const,
+        question: beat.question,
+        simplerQuestion: beat.simplerQuestion,
+        difficulty: level,
+        reviewsConcepts: beat.reviewsConcepts,
+        assessmentKind: lesson.assessmentKind,
+        options: beat.options.map((text, index) => ({ id: `${beat.key}-${index + 1}`, text, isCorrect: index === beat.correct, ...(index === beat.correct ? {} : { misconceptionKey: `${beat.key}-misconception-${index + 1}` }) })),
+        onCorrect,
+        onIncorrect: `outcome-${beat.key}`,
+      },
+    };
+  };
   const makeOutcome = (beat: PilotBeat, next = `beat-${beat.key}`) => ({
     id: `outcome-${beat.key}`,
     type: "branch_outcome" as const,
     background: `${pilot.subject}, supportive correction for ${beat.key}`,
     speaker: pilot.host,
-    ...sceneCopy(`Close, detective. ${beat.refutation}`),
+    ...narrativeSupport(`Close, detective. ${beat.refutation}`),
     refutation: beat.refutation,
     next,
   });
@@ -340,26 +507,23 @@ function buildPilot(pilot: Pilot): DemoShow {
     cast: [{ id: `${pilot.id}-host`, name: pilot.host, persona: theme.hostPersona, voice: theme.voice }],
     scenes: [
       { id: "recap", type: "recap", background: `${pilot.subject}, recap card`, speaker: pilot.host, recap: [pilot.recap], next: "act-1-open" },
-      { id: "act-1-open", type: "narrative", background: `${pilot.subject}, act one discovery`, speaker: pilot.host, ...sceneCopy(pilot.actLines[0]), next: `beat-${conceptOne.key}` },
-      makeBeat(conceptOne, "act-1-payoff", pilot.difficulty),
+      // One short setup narrative per act (each foreshadows that act's concept),
+      // then the concept is taught and tested inside its beat. No filler payoffs,
+      // no separate "integration" scene — the combine and finale beats do that.
+      { id: "act-1-open", type: "narrative", background: `${pilot.subject}, act one discovery`, speaker: pilot.host, ...narrativeSupport(pilot.actLines[0]), next: `beat-${conceptOne.key}` },
+      makeBeat(conceptOne, "act-2-open", pilot.difficulty, "introduce"),
       makeOutcome(conceptOne),
-      { id: "act-1-payoff", type: "narrative", background: `${pilot.subject}, act one result`, speaker: pilot.host, ...sceneCopy(pilot.actLines[1]), next: "commercial" },
-      { ...makeBeat(retrieval, "act-2-open", Math.max(1, pilot.difficulty - 1), "commercial"), id: "commercial", background: `${pilot.subject}, cheerful commercial review`, line: `Commercial break: replay the key clue. ${retrieval.line}`, simpler: `Quick review: ${retrieval.simplerQuestion}`, simplerAgain: retrieval.simplerQuestion },
-      makeOutcome(retrieval, "commercial"),
-      { id: "act-2-open", type: "narrative", background: `${pilot.subject}, act two investigation`, speaker: pilot.host, ...sceneCopy(pilot.actLines[2]), next: `beat-${conceptTwo.key}` },
-      makeBeat(conceptTwo, "act-2-payoff", pilot.difficulty),
+      { id: "act-2-open", type: "narrative", background: `${pilot.subject}, act two investigation`, speaker: pilot.host, ...narrativeSupport(pilot.actLines[2]), next: `beat-${conceptTwo.key}` },
+      makeBeat(conceptTwo, "act-3-open", pilot.difficulty, "introduce"),
       makeOutcome(conceptTwo),
-      { id: "act-2-payoff", type: "narrative", background: `${pilot.subject}, act two result`, speaker: pilot.host, ...sceneCopy(`That retrieves Act One's clue. ${pilot.actLines[3]}`), next: "act-3-open" },
-      { id: "act-3-open", type: "narrative", background: `${pilot.subject}, act three plan`, speaker: pilot.host, ...sceneCopy(`Final act: connect the evidence. ${pilot.objectives[2].text}`), next: `beat-${conceptThree.key}` },
-      makeBeat(conceptThree, "integration", pilot.difficulty),
+      { id: "act-3-open", type: "narrative", background: `${pilot.subject}, act three plan`, speaker: pilot.host, ...narrativeSupport(pilot.actLines[3]), next: `beat-${conceptThree.key}` },
+      makeBeat(conceptThree, `beat-${integration.key}`, pilot.difficulty, "introduce"),
       makeOutcome(conceptThree),
-      { id: "integration", type: "narrative", background: `${pilot.subject}, concepts connecting`, speaker: pilot.host, ...sceneCopy("Now the separate clues work together. Use each idea for the next signal check."), next: `beat-${integration.key}` },
-      makeBeat(integration, `beat-${finale.key}`, pilot.difficulty),
+      makeBeat(integration, `beat-${finale.key}`, pilot.difficulty, "review"),
       makeOutcome(integration),
-      makeBeat(finale, "finale-payoff", pilot.difficulty),
+      makeBeat(finale, "cliffhanger", pilot.difficulty, "review"),
       makeOutcome(finale),
-      { id: "finale-payoff", type: "narrative", background: `${pilot.subject}, final act resolution`, speaker: pilot.host, ...sceneCopy("You linked every clue. The signal is clear and the next lesson is ready."), next: "cliffhanger" },
-      { id: "cliffhanger", type: "cliffhanger", background: `${pilot.subject}, next adventure revealed`, speaker: pilot.host, ...sceneCopy(pilot.teaser), next: null },
+      { id: "cliffhanger", type: "cliffhanger", background: `${pilot.subject}, next adventure revealed`, speaker: pilot.host, ...narrativeSupport(pilot.teaser), next: null },
     ],
     cliffhanger: { teaser: pilot.teaser, airsAfterHours: 24 },
   });
@@ -380,7 +544,7 @@ const pilots: Pilot[] = [
       { key: "current", line: "Meter check: identify the flow.", question: "Electric current is the flow of...", simplerQuestion: "What moves through a circuit as current?", options: ["Electric charge", "Only voltage", "Resistance"], correct: 0, refutation: "Current is moving electric charge. Voltage pushes, while resistance opposes that flow.", reviewsConcepts: ["circuits.current"] },
       { key: "retrieve-voltage", line: "Midway transmission: retrieve Act One.", question: "Which quantity provides the push that can drive current?", simplerQuestion: "Which word means electrical push?", options: ["Voltage", "Current", "Resistance"], correct: 0, refutation: "Voltage is the push. Current is the resulting charge flow and resistance makes the flow harder.", reviewsConcepts: ["circuits.voltage"] },
       { key: "ohms-law", line: "The frontier equation is online.", question: "If voltage stays the same and resistance increases, current will...", simplerQuestion: "More resistance with the same push means what happens to current?", options: ["Decrease", "Increase", "Stay exactly the same"], correct: 0, refutation: "Ohm's law is I = V/R, so increasing resistance at fixed voltage lowers current.", reviewsConcepts: ["circuits.ohms-law"] },
-      { key: "combine", line: "Combine the meter clues.", question: "A 12 V source and 6 Ω resistor produce what current?", simplerQuestion: "Use current = voltage ÷ resistance: 12 ÷ 6 = ?", options: ["2 A", "18 A", "72 A"], correct: 0, refutation: "I = V/R, so 12 volts divided by 6 ohms equals 2 amperes.", reviewsConcepts: ["circuits.voltage", "circuits.current", "circuits.ohms-law"] },
+      { key: "combine", line: "Combine the meter clues.", question: "A 24 V source and 6 Ω resistor produce what current?", simplerQuestion: "Use current = voltage ÷ resistance: 24 ÷ 6 = ?", options: ["4 A", "18 A", "144 A"], correct: 0, refutation: "I = V/R, so 24 volts divided by 6 ohms equals 4 amperes.", reviewsConcepts: ["circuits.voltage", "circuits.current", "circuits.ohms-law"] },
       { key: "finale", line: "Finale: stabilize the ship's circuit.", question: "Which change lowers current in a circuit with a fixed voltage?", simplerQuestion: "To make less current with the same voltage, what should increase?", options: ["Increase resistance", "Increase voltage", "Remove the circuit path"], correct: 0, refutation: "Increasing resistance lowers current when voltage is fixed. Raising voltage increases current; opening the path stops the circuit rather than tuning it.", reviewsConcepts: ["circuits.voltage", "circuits.current", "circuits.ohms-law"] },
     ] },
   {
@@ -398,11 +562,11 @@ const pilots: Pilot[] = [
       { key: "second-law", line: "Power meter: read the net force.", question: "With the same mass, a larger net force causes...", simplerQuestion: "More net force on the same object gives what?", options: ["More acceleration", "Less acceleration", "No motion at all"], correct: 0, refutation: "Newton's second law says acceleration increases when net force increases for the same mass.", reviewsConcepts: ["forces.newton-second"] },
       { key: "retrieve-first-law", line: "Mid-lab callback: balance check.", question: "A cart moves at constant speed in a straight line. Its net force is...", simplerQuestion: "No change in motion means the net force is what?", options: ["Zero", "Always large", "Equal to its mass"], correct: 0, refutation: "Constant velocity means no acceleration, so the net force is zero even if individual forces are present.", reviewsConcepts: ["forces.newton-first"] },
       { key: "third-law", line: "Team-up move: spot the action-reaction pair.", question: "When a rocket pushes exhaust backward, the exhaust pushes the rocket...", simplerQuestion: "If the rocket pushes gas backward, which way does the gas push the rocket?", options: ["Forward", "Backward only", "Not at all"], correct: 0, refutation: "Newton's third-law forces are equal and opposite on different objects, so exhaust pushes the rocket forward.", reviewsConcepts: ["forces.newton-third"] },
-      { key: "combine", line: "Use force math and balance together.", question: "A 2 kg cart has a net force of 6 N. Its acceleration is...", simplerQuestion: "Acceleration = force ÷ mass: 6 ÷ 2 = ?", options: ["3 m/s²", "8 m/s²", "12 m/s²"], correct: 0, refutation: "Using F = ma, acceleration is 6 newtons divided by 2 kilograms: 3 m/s².", reviewsConcepts: ["forces.newton-first", "forces.newton-second"] },
+      { key: "combine", line: "Use force math and balance together.", question: "A 2 kg cart has a net force of 8 N. Its acceleration is...", simplerQuestion: "Acceleration = force ÷ mass: 8 ÷ 2 = ?", options: ["4 m/s²", "6 m/s²", "16 m/s²"], correct: 0, refutation: "Using F = ma, acceleration is 8 newtons divided by 2 kilograms: 4 m/s².", reviewsConcepts: ["forces.newton-first", "forces.newton-second"] },
       { key: "finale", line: "Finale: launch the lab rover safely.", question: "Which statement uses all three Newton's laws correctly?", simplerQuestion: "Pick the statement with balance, acceleration, and an action-reaction pair right.", options: ["A net force accelerates the rover; its wheels push backward on the ground as the ground pushes it forward", "Balanced forces make the rover speed up; the ground gives no force back", "The rover accelerates without any net force because it has mass"], correct: 0, refutation: "A net force causes acceleration, and the ground and wheels exert an equal-and-opposite pair on different objects.", reviewsConcepts: ["forces.newton-first", "forces.newton-second", "forces.newton-third"] },
     ] },
   {
-    id: "tiny-lightkeepers", title: "The Tiny Lightkeepers", teaser: "Next: The Rainy-Day Garden Parade.", themeId: "cozy-preschool", difficulty: 1, subject: "a cozy garden water-cycle village", host: "Tilly the Tortoise", recap: { prompt: "Water vapor is water in what state of matter?", answers: ["gas"], conceptKey: "water.vapor" }, objectives: [{ key: "water.evaporation", text: "Explain evaporation as liquid water changing into water vapor." }, { key: "water.condensation", text: "Explain condensation as water vapor cooling into liquid droplets." }, { key: "water.precipitation", text: "Identify precipitation as water falling from clouds." }], actLines: ["A sunbeam warms a puddle, and tiny bits of water rise into the air as vapor.", "Evaporation is a change from liquid water to a gas called water vapor.", "High in the sky, cooling vapor gathers into cloud droplets.", "Our last stop is the trip from cloud back to land."], beats: [
+    id: "tiny-lightkeepers", title: "The Tiny Lightkeepers", teaser: "Next: The Rainy-Day Garden Parade.", themeId: "cozy-preschool", difficulty: 1, subject: "a cozy garden water-cycle village", host: "Tilly the Tortoise", recap: { prompt: "Water vapor is water in what state of matter?", answers: ["gas"], conceptKey: "water.vapor" }, objectives: [{ key: "water.evaporation", text: "Explain evaporation as liquid water changing into water vapor." }, { key: "water.condensation", text: "Explain condensation as water vapor cooling into liquid droplets." }, { key: "water.precipitation", text: "Identify precipitation as water falling from clouds." }], actLines: ["A sunbeam warms a puddle, and tiny bits of water rise into the air as vapor.", "So the puddle didn't really disappear — it drifted up as vapor too tiny to see.", "High in the sky, cooling vapor gathers into cloud droplets.", "Our last stop is the trip from cloud back to land."], beats: [
       { key: "evaporation", line: "Where did the warm puddle water go?", question: "Evaporation happens when liquid water changes into...", simplerQuestion: "When a puddle warms and rises into air, it becomes what?", options: ["Water vapor", "Ice", "Rock"], correct: 0, refutation: "Evaporation changes liquid water into water vapor, a gas. It does not make ice or rock.", reviewsConcepts: ["water.evaporation"] },
       { key: "condensation", line: "Look closely at the cloud droplets.", question: "Condensation happens when water vapor cools and becomes...", simplerQuestion: "Cooling water vapor makes what kind of water?", options: ["Liquid droplets", "More vapor", "Sunlight"], correct: 0, refutation: "Condensation turns cooling water vapor into tiny liquid droplets that can form clouds.", reviewsConcepts: ["water.condensation"] },
       { key: "retrieve-evaporation", line: "Remember the first sunny clue.", question: "Which process sends water from a warm pond into the air?", simplerQuestion: "What is the name for water rising from a warm pond?", options: ["Evaporation", "Condensation", "Precipitation"], correct: 0, refutation: "Evaporation sends liquid water into the air as vapor; condensation makes droplets and precipitation falls from clouds.", reviewsConcepts: ["water.evaporation"] },
@@ -421,7 +585,7 @@ const pilots: Pilot[] = [
     ] },
 ];
 
-/** Five independent no-key pilots: each is a complete three-act, 21-scene episode. */
+/** Five independent no-key pilots: each is a tight three-act, 15-scene episode. */
 export const demoShows: DemoShow[] = pilots.map(buildPilot);
 
 /** The studio's initial episode remains a full fixture, not a shared clone. */

@@ -21,7 +21,11 @@ export function collectDemoNarrationTracks(shows: DemoShow[] = demoShows): DemoN
   const byKey = new Map<string, DemoNarrationTrack>();
   for (const show of shows) {
     for (const scene of show.episode.scenes) {
-      for (const line of [scene.line, scene.simpler, scene.simplerAgain]) {
+      const lessonLines = [
+        ...(scene.teach?.map((step) => step.text) ?? []),
+        ...(scene.workedExample?.map((step) => step.text) ?? []),
+      ];
+      for (const line of [...lessonLines, scene.line, scene.simpler, scene.simplerAgain]) {
         if (!line) continue;
         const normalized = normalizeNarrationLine(line);
         const key = `${show.theme.voice}:${normalized}`;
@@ -29,5 +33,5 @@ export function collectDemoNarrationTracks(shows: DemoShow[] = demoShows): DemoN
       }
     }
   }
-  return [...byKey.values()].sort((left, right) => left.key.localeCompare(right.key));
+  return [...byKey.values()].sort((left, right) => left.key < right.key ? -1 : left.key > right.key ? 1 : 0);
 }

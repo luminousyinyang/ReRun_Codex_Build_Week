@@ -4,7 +4,7 @@
 
 ReRun is being built for the **OpenAI Build Week 2026 - Education** category. It is designed for high-school, college, and self-directed learners who want a more active alternative to passive study media.
 
-> Status: the bundled demo is a no-key interactive broadcast. Its voice-aware narration catalog and asset prerender pipeline cover every line across all five pilots; until the checked-in MP3 bundle is rendered with `OPENAI_API_KEY`, demo playback falls directly to browser speech or its visible timer rather than calling live TTS. Configured OpenAI routes add AI narration, live scene art, and original-show themes with their own validated TTS voice and delivery direction for pasted notes.
+> Status: the bundled demo is a no-key interactive broadcast. Each question follows a learner-paced micro-lesson, and the voice-aware narration catalog and asset prerender pipeline cover its authored teaching and rewind lines across all five pilots. Until the checked-in MP3 bundle is rendered with `OPENAI_API_KEY`, demo playback falls directly to browser speech or its visible timer rather than calling live TTS. Configured OpenAI routes add AI narration, live scene art, and original-show themes with their own validated TTS voice and delivery direction for pasted notes.
 
 ## The missing visual layer
 
@@ -17,7 +17,7 @@ It is not a passive video generator, and it does not claim that a visual format 
 The product's learning loop is deliberately active:
 
 1. A learner supplies short notes or picks one of five bundled, topic-specific pilots.
-2. The CRT television presents a story scene and stops at a question beat.
+2. The CRT television first presents a short, learner-paced teaching sequence: a hook, plain-language definition, concrete analogy or example, and misconception contrast. A persistent lower-third keeps a key term or formula visible. Only then does it stop at a question beat.
 3. A correct response advances the plot. An incorrect response plays out the mistaken logic, gives an accurate correction, and enables an explicit retry.
 4. Rewind requests a simpler explanation and a genuinely simpler rewording of the question. After two misses, the correct answer is revealed and the learner explicitly continues. Commercial breaks double as review questions.
 5. The episode ends with a cliffhanger and an estimated review time.
@@ -54,7 +54,7 @@ The renderer owns presentation and navigation. The model may author validated co
 - **Server:** structured episode generation, TTS narration, safe original-theme normalization, and streamed scene-art routes.
 - **Reliability:** Zod validation, one repair retry for generated structures, cached/bundled demo assets, and clear fallback states.
 
-Five no-key pilots make the show-format choice explorable immediately: **The Photon Frontier** teaches circuits and Ohm's law, **The Cellular Casefile** organelles, **Power-Up Plant Lab** Newton's laws and forces, **The Tiny Lightkeepers** the water cycle, and **The Chloroplast Quest** light reactions and Calvin-cycle setup. Each is an independent 21-scene, three-act episode with three taught concepts, an Act 2 retrieval review, and a cumulative finale. Configured live episodes use a sanitized original theme, stream matching scene art without blocking playback, and retain deterministic fallback art if a request fails. Each theme selects a supported built-in TTS voice plus original delivery direction; `npm run prerender:demo-audio` writes the checked-in bundle for every demo line.
+Five no-key pilots make the show-format choice explorable immediately: **The Photon Frontier** teaches circuits and Ohm's law, **The Cellular Casefile** organelles, **Power-Up Plant Lab** Newton's laws and forces, **The Tiny Lightkeepers** the water cycle, and **The Chloroplast Quest** light reactions and Calvin-cycle setup. Each is an independent 21-scene, three-act episode with three taught concepts, a 3–5-step teaching sequence before every check, an Act 2 retrieval review, and a cumulative finale. Calculation checks include a worked example before the learner applies the method to a new value. Configured live episodes use a sanitized original theme, stream matching scene art without blocking playback, and retain deterministic fallback art if a request fails. Each theme selects a supported built-in TTS voice plus original delivery direction; `npm run prerender:demo-audio` writes the checked-in bundle for every authored demo narration line.
 
 The full contract is in [Architecture](docs/ARCHITECTURE.md) and [EpisodeSpec v1](docs/EPISODE_SPEC.md).
 

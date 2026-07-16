@@ -128,7 +128,6 @@ export function ReRunPlayer() {
   const [muted, setMuted] = useState(false);
   const [paused, setPaused] = useState(false);
   const [autoplay, setAutoplay] = useState(true);
-  const [autoplayDwell, setAutoplayDwell] = useState(false);
   const [answeringOption, setAnsweringOption] = useState<string | null>(null);
   const [wrongAttempt, setWrongAttempt] = useState<WrongAttempt | null>(null);
   const [answerRevealed, setAnswerRevealed] = useState(false);
@@ -143,6 +142,8 @@ export function ReRunPlayer() {
   const [hostReaction, setHostReaction] = useState<"celebrate" | "retry" | null>(null);
   const [visuals, setVisuals] = useState<Record<string, string>>({});
   const [sceneCut, setSceneCut] = useState(false);
+  const [lessonIndex, setLessonIndex] = useState(0);
+  const [rewindPlayback, setRewindPlayback] = useState(false);
   const audioCache = useRef(new Map<string, string>());
   const objectUrls = useRef(new Set<string>());
   const narrationTimer = useRef<number | null>(null);
@@ -162,10 +163,25 @@ export function ReRunPlayer() {
   const activeDemoShow = useMemo(() => demoShows.find((show) => show.episode.episodeId === episode.episodeId), [episode.episodeId]);
   const bundledSceneArt = activeDemoShow ? (scene.type === "narrative" || scene.type === "cliffhanger" ? activeDemoShow.art.teaching : activeDemoShow.art.challenge) : undefined;
   const accuracy = ratings.length ? Math.round((ratings.filter(Boolean).length / ratings.length) * 100) : null;
-  const visibleLine = rewindLevel >= 2 && scene.simplerAgain ? scene.simplerAgain : rewindLevel >= 1 && scene.simpler ? scene.simpler : scene.line;
+  const lessonUnits = useMemo(() => [
+    ...(scene.teach ?? []).map((step) => ({ ...step, phase: "teach" as const })),
+    ...(scene.workedExample ?? []).map((step) => ({ ...step, phase: "worked-example" as const })),
+    ...(scene.line ? [{ role: "recap" as const, text: scene.line, onScreen: undefined, phase: "summary" as const }] : []),
+  ], [scene]);
+  const activeLesson = lessonUnits[lessonIndex];
+  const rewindLine = rewindLevel >= 2 && scene.simplerAgain ? scene.simplerAgain : scene.simpler;
+  const visibleLine = rewindPlayback && rewindLine ? rewindLine : activeLesson?.text;
+  const hasMoreLesson = lessonIndex < lessonUnits.length - 1;
   const displayedBeat = scene.beat as PlayerBeat | undefined;
   const displayedQuestion = rewindLevel > 0 && displayedBeat?.simplerQuestion ? displayedBeat.simplerQuestion : displayedBeat?.question;
   const activeTheme = episode.theme ?? defaultTheme;
+
+  useEffect(() => {
+    setLessonIndex(0);
+    setRewindPlayback(false);
+    setRewindLevel(0);
+    setBeatRevealed(false);
+  }, [scene.id]);
 
   useEffect(() => {
     if (screen !== "boot") return;
@@ -236,7 +252,7 @@ export function ReRunPlayer() {
     const finish = () => {
       if (cancelled) return;
       setNarration("complete");
-      if (scene.beat) {
+      if (scene.beat && !rewindPlayback && !hasMoreLesson) {
         setBeatRevealed(true);
       }
     };
@@ -337,7 +353,7 @@ export function ReRunPlayer() {
       }
       setAudioElement(null);
     };
-  }, [screen, scene.id, visibleLine, activeTheme.id, activeTheme.voice, activeTheme.voiceInstruction, episode.episodeId, muted]);
+  }, [screen, scene.id, visibleLine, activeTheme.id, activeTheme.voice, activeTheme.voiceInstruction, episode.episodeId, muted, rewindPlayback, hasMoreLesson]);
 
   useEffect(() => {
     if (audioElement) {
@@ -358,37 +374,33 @@ export function ReRunPlayer() {
     }
   }, [audioElement, muted, narration, paused]);
 
-  // Autoplay is deliberately narrow: it only moves ordinary narrative tape
-  // forward, and only after the learner can see an "Up next" dwell. Outcomes,
-  // commercials, questions, and cliffhangers always require a learner action.
+  // Autoplay may move through authored teaching units, but it never crosses an
+  // assessment, feedback outcome, commercial answer, or cliffhanger boundary.
   useEffect(() => {
     const canAutoplay = screen === "episode"
       && autoplay
       && !paused
       && narration === "complete"
-      && scene.type === "narrative"
-      && Boolean(scene.next);
+      && !rewindPlayback
+      && (hasMoreLesson || (scene.type === "narrative" && Boolean(scene.next)));
 
     if (!canAutoplay) {
       if (autoplayTimer.current !== null) window.clearTimeout(autoplayTimer.current);
       autoplayTimer.current = null;
-      if (screen !== "episode" || !autoplay || scene.type !== "narrative" || narration !== "complete") {
+      if (screen !== "episode" || !autoplay || (!hasMoreLesson && scene.type !== "narrative") || narration !== "complete") {
         autoplayRemaining.current = 1_600;
-        setAutoplayDwell(false);
-      } else if (paused) {
-        setAutoplayDwell(true);
       }
       return;
     }
 
     const delay = Math.max(0, autoplayRemaining.current);
-    setAutoplayDwell(true);
     autoplayDeadline.current = Date.now() + delay;
     autoplayTimer.current = window.setTimeout(() => {
       autoplayTimer.current = null;
       autoplayRemaining.current = 1_600;
-      setAutoplayDwell(false);
-      if (scene.next) {
+      if (hasMoreLesson) {
+        setLessonIndex((current) => current + 1);
+      } else if (scene.next) {
         setSceneId(scene.next);
         setRewindLevel(0);
         setBeatRevealed(false);
@@ -405,7 +417,7 @@ export function ReRunPlayer() {
         autoplayRemaining.current = Math.max(0, autoplayDeadline.current - Date.now());
       }
     };
-  }, [autoplay, narration, paused, scene.id, scene.next, scene.type, screen]);
+  }, [autoplay, narration, paused, scene.id, scene.next, scene.type, screen, hasMoreLesson, rewindPlayback]);
 
   useEffect(() => {
     if (!hostReaction || scene.type === "branch_outcome") return;
@@ -530,6 +542,19 @@ export function ReRunPlayer() {
     }
   }
 
+  function continueLesson() {
+    if (rewindPlayback) {
+      setRewindPlayback(false);
+      setRewindLevel(0);
+      return;
+    }
+    if (hasMoreLesson) {
+      setLessonIndex((current) => current + 1);
+      return;
+    }
+    advance();
+  }
+
   function playStaticBurst() {
     if (muted || typeof window === "undefined" || !window.AudioContext) return;
     const context = new window.AudioContext();
@@ -607,7 +632,13 @@ export function ReRunPlayer() {
       return;
     }
     setRewindLevel((level) => Math.min(2, level + 1));
-    setNotice("VHS rewind - same fact, simpler take.");
+    if (beatRevealed) {
+      setNotice("VHS rewind - the question is now using its simpler take.");
+      return;
+    }
+    setRewindPlayback(true);
+    setBeatRevealed(false);
+    setNotice("VHS rewind - hear a simpler explanation, then resume this lesson step.");
   }
 
   const isBeat = Boolean(scene.beat);
@@ -632,7 +663,7 @@ export function ReRunPlayer() {
               const isSelected = answeringOption === option.id;
               const showCorrect = answerRevealed && option.isCorrect;
               return <button key={option.id} autoFocus={index === 0} className={isSelected || showCorrect ? `is-selected ${option.isCorrect ? "is-correct" : "is-wrong"}` : ""} disabled={Boolean(answeringOption) || answerRevealed} onClick={() => choose(option.id)}><span>{String.fromCharCode(65 + index)}</span><b>{option.text}</b>{isSelected && !answerRevealed && <em>ANSWER LOCKED</em>}{showCorrect && <em>CORRECT ANSWER</em>}</button>;
-            })}</div>{answerRevealed && <div className="answer-reveal" role="status"><strong>{wrongAttempt?.correctAnswer} is correct.</strong><span>{wrongAttempt?.explanation}</span><button className="continue-with-answer" onClick={continueWithAnswer}>Continue with answer ▶</button></div>}</section></>}{!isBeat && !isCliffhanger && !paused && <>{autoplayDwell && <p className="up-next" role="status">UP NEXT — advancing in a moment</p>}<button onClick={advance} className="continue" disabled={isOutcome && narration !== "complete"}>{isOutcome && narration !== "complete" ? "Feedback playing..." : isOutcome ? "Rewind & retry" : narration === "loading" || narration === "playing" || narration === "fallback" ? "Skip line" : "Continue"} ▶</button></>}{isCliffhanger && <section className="cliffhanger"><p>TO BE CONTINUED</p><h2>{episode.cliffhanger.teaser}</h2><span>Next episode airs in {episode.cliffhanger.airsAfterHours} hours</span><button onClick={() => setScreen("guide")}>See TV guide</button></section>}<p className="ai-voice-note">Narration available without an API key · captions carry all essential feedback</p></div>}
+            })}</div>{answerRevealed && <div className="answer-reveal" role="status"><strong>{wrongAttempt?.correctAnswer} is correct.</strong><span>{wrongAttempt?.explanation}</span><button className="continue-with-answer" onClick={continueWithAnswer}>Continue with answer ▶</button></div>}</section></>}{(isOutcome || rewindPlayback || !autoplay) && (!isBeat || !beatRevealed) && !isCliffhanger && !paused && <button onClick={continueLesson} className="continue" disabled={isOutcome && narration !== "complete"}>{isOutcome && narration !== "complete" ? "Feedback playing..." : rewindPlayback ? "Resume lesson" : isOutcome ? "Rewind & retry" : narration === "loading" || narration === "playing" || narration === "fallback" ? "Skip line" : hasMoreLesson ? "Next clue" : "Continue"} ▶</button>}{isCliffhanger && <section className="cliffhanger"><p>TO BE CONTINUED</p><h2>{episode.cliffhanger.teaser}</h2><span>Next episode airs in {episode.cliffhanger.airsAfterHours} hours</span><button onClick={() => setScreen("guide")}>See TV guide</button></section>}<p className="ai-voice-note">Narration available without an API key · captions carry all essential feedback</p></div>}
             {screen === "guide" && <div className="guide-screen"><ScreenHeader right="SPACED REVIEW LINEUP" /><div className="guide-body"><p className="eyebrow">TV GUIDE</p><h2>Next on ReRun</h2><div className="guide-row"><b>CH 03</b><span>{episode.title}</span><i>WATCHED</i></div><div className="guide-row"><b>CH 03</b><span>{episode.cliffhanger.teaser}</span><i>+{episode.cliffhanger.airsAfterHours}h</i></div><div className="guide-row locked"><b>CH 07</b><span>The Buzz-In</span><i>COMING SOON</i></div><button className="primary" onClick={() => loadDemo()}>Watch again</button></div></div>}
             {notice && <p className="notice" role="status">{notice}</p>}
           </div>
