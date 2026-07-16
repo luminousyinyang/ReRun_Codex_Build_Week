@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { demoEpisode, demoShows, type DemoShow, type EpisodeSpec, type Scene } from "@/lib/episode";
+import { demoEpisode, demoShows, episodeSchema, type DemoShow, type EpisodeSpec, type Scene } from "@/lib/episode";
 import { SceneIllustration } from "@/components/scene-illustration";
 import { defaultTheme, showThemePresets, type ShowTheme, type ThemeInput } from "@/lib/theme";
 import { bundledDemoAudioFile } from "@/lib/demo-audio-manifest";
 
-type Screen = "off" | "boot" | "static" | "ingest" | "shows" | "standby" | "recap" | "episode" | "guide";
+type Screen = "off" | "boot" | "static" | "home" | "ingest" | "shows" | "standby" | "recap" | "episode" | "guide";
 type Narration = "idle" | "loading" | "playing" | "fallback" | "complete";
 type NarrationTransport = "audio" | "speech" | "timer" | null;
 type PlayerBeat = NonNullable<Scene["beat"]> & {
@@ -28,6 +28,8 @@ type AudioBus = {
   interval: number | null;
   oscillators: OscillatorNode[];
 };
+
+const GENERATED_EPISODES_CACHE_KEY = "rerun.generated-episodes.v1";
 
 function getAudioContext() {
   const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -144,6 +146,8 @@ export function ReRunPlayer() {
   const [sceneCut, setSceneCut] = useState(false);
   const [lessonIndex, setLessonIndex] = useState(0);
   const [rewindPlayback, setRewindPlayback] = useState(false);
+  const [generatedEpisodes, setGeneratedEpisodes] = useState<EpisodeSpec[]>([]);
+  const [generatedEpisodesLoaded, setGeneratedEpisodesLoaded] = useState(false);
   const audioCache = useRef(new Map<string, string>());
   const objectUrls = useRef(new Set<string>());
   const narrationTimer = useRef<number | null>(null);
@@ -158,6 +162,7 @@ export function ReRunPlayer() {
   const autoplayTimer = useRef<number | null>(null);
   const autoplayDeadline = useRef(0);
   const autoplayRemaining = useRef(1_600);
+  const preserveRewindForScene = useRef<string | null>(null);
 
   const scene = useMemo(() => findScene(episode, sceneId), [episode, sceneId]);
   const activeDemoShow = useMemo(() => demoShows.find((show) => show.episode.episodeId === episode.episodeId), [episode.episodeId]);
@@ -175,11 +180,51 @@ export function ReRunPlayer() {
   const displayedBeat = scene.beat as PlayerBeat | undefined;
   const displayedQuestion = rewindLevel > 0 && displayedBeat?.simplerQuestion ? displayedBeat.simplerQuestion : displayedBeat?.question;
   const activeTheme = episode.theme ?? defaultTheme;
+  const isDemoEpisode = Boolean(activeDemoShow);
+  const guideEpisodes = useMemo(() => {
+    if (activeDemoShow) {
+      const currentIndex = demoShows.findIndex((show) => show.id === activeDemoShow.id);
+      return [...demoShows.slice(currentIndex + 1), ...demoShows.slice(0, currentIndex)]
+        .map((show) => ({ id: show.id, title: show.title, kind: "demo" as const, show }));
+    }
+    return generatedEpisodes
+      .filter((candidate) => candidate.episodeId !== episode.episodeId)
+      .map((candidate) => ({ id: candidate.episodeId, title: candidate.title, kind: "generated" as const, episode: candidate }));
+  }, [activeDemoShow, episode.episodeId, generatedEpisodes]);
+
+  useEffect(() => {
+    try {
+      const cached = JSON.parse(window.localStorage.getItem(GENERATED_EPISODES_CACHE_KEY) ?? "[]") as unknown;
+      if (Array.isArray(cached)) {
+        setGeneratedEpisodes(cached.flatMap((candidate) => {
+          const parsed = episodeSchema.safeParse(candidate);
+          return parsed.success && !parsed.data.courseId.startsWith("demo-") ? [parsed.data] : [];
+        }));
+      }
+    } catch {
+      // A malformed old cache should never prevent the player from opening.
+    } finally {
+      setGeneratedEpisodesLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!generatedEpisodesLoaded) return;
+    try {
+      window.localStorage.setItem(GENERATED_EPISODES_CACHE_KEY, JSON.stringify(generatedEpisodes));
+    } catch {
+      // The episode remains available for this session if browser storage is full.
+    }
+  }, [generatedEpisodes, generatedEpisodesLoaded]);
 
   useEffect(() => {
     setLessonIndex(0);
     setRewindPlayback(false);
-    setRewindLevel(0);
+    if (preserveRewindForScene.current === scene.id) {
+      preserveRewindForScene.current = null;
+    } else {
+      setRewindLevel(0);
+    }
     setBeatRevealed(false);
   }, [scene.id]);
 
@@ -194,7 +239,7 @@ export function ReRunPlayer() {
     if (screen !== "static") return;
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     playStaticBurst();
-    const timer = window.setTimeout(() => setScreen("ingest"), reduceMotion ? 0 : 360);
+    const timer = window.setTimeout(() => setScreen("home"), reduceMotion ? 0 : 360);
     return () => window.clearTimeout(timer);
   }, [screen, muted]);
 
@@ -419,6 +464,22 @@ export function ReRunPlayer() {
     };
   }, [autoplay, narration, paused, scene.id, scene.next, scene.type, screen, hasMoreLesson, rewindPlayback]);
 
+  // A rewind is a short explanatory detour, not a second transport the learner
+  // must operate. Once that narration is over, return to the same beat with
+  // its simpler question selected.
+  useEffect(() => {
+    if (screen !== "episode" || !rewindPlayback || narration !== "complete") return;
+    const nextSceneId = findScene(episode, sceneId).next;
+    setRewindPlayback(false);
+    if (nextSceneId) {
+      preserveRewindForScene.current = nextSceneId;
+      setSceneId(nextSceneId);
+    }
+    setPaused(false);
+    setBeatRevealed(false);
+    setHostReaction(null);
+  }, [episode, narration, rewindPlayback, sceneId, screen]);
+
   useEffect(() => {
     if (!hostReaction || scene.type === "branch_outcome") return;
     const timer = window.setTimeout(() => setHostReaction(null), 900);
@@ -460,8 +521,8 @@ export function ReRunPlayer() {
     setNotice("");
   }
 
-  function loadDemo(show: DemoShow = demoShows[0]) {
-    setEpisode(show.episode);
+  function loadEpisode(nextEpisode: EpisodeSpec, notice: string) {
+    setEpisode(nextEpisode);
     setSceneId("recap");
     setRecap("");
     setRecapFeedback("");
@@ -474,7 +535,15 @@ export function ReRunPlayer() {
     setVisuals({});
     setThemeNotice("");
     setScreen("recap");
-    setNotice(`${show.title} loaded. No API key required.`);
+    setNotice(notice);
+  }
+
+  function loadDemo(show: DemoShow = demoShows[0]) {
+    loadEpisode(show.episode, `${show.title} loaded. No API key required.`);
+  }
+
+  function loadCachedEpisode(cachedEpisode: EpisodeSpec) {
+    loadEpisode(cachedEpisode, `${cachedEpisode.title} loaded from your saved episodes.`);
   }
 
   async function generateEpisode() {
@@ -490,6 +559,10 @@ export function ReRunPlayer() {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error ?? "Episode unavailable");
       setEpisode(result.episode);
+      setGeneratedEpisodes((current) => [
+        result.episode,
+        ...current.filter((candidate) => candidate.episodeId !== result.episode.episodeId),
+      ]);
       setThemeNotice(result.themeNotice ?? "");
       setVisuals({});
       setSceneId("recap");
@@ -543,11 +616,6 @@ export function ReRunPlayer() {
   }
 
   function continueLesson() {
-    if (rewindPlayback) {
-      setRewindPlayback(false);
-      setRewindLevel(0);
-      return;
-    }
     if (hasMoreLesson) {
       setLessonIndex((current) => current + 1);
       return;
@@ -633,12 +701,10 @@ export function ReRunPlayer() {
     }
     setRewindLevel((level) => Math.min(2, level + 1));
     if (beatRevealed) {
-      setNotice("VHS rewind - the question is now using its simpler take.");
       return;
     }
     setRewindPlayback(true);
     setBeatRevealed(false);
-    setNotice("VHS rewind - hear a simpler explanation, then resume this lesson step.");
   }
 
   const isBeat = Boolean(scene.beat);
@@ -655,16 +721,17 @@ export function ReRunPlayer() {
             {screen === "off" && <div className="screen-center off-screen"><p>Your notes are about to go on air</p><span className="power-light" /><span>PRESS POWER</span></div>}
             {screen === "boot" && <div className="boot-screen" aria-label="Television powering on"><i className="boot-line" /></div>}
             {screen === "static" && <div className="static-screen" aria-label="Broadcast signal tuning" />}
-            {screen === "ingest" && <div className="ingest-screen"><ScreenHeader right="NO SIGNAL - REC" /><div className="ingest-body"><p className="eyebrow">CH 00</p><h1>Feed me your material.</h1><fieldset className="theme-picker"><legend>Choose your original show</legend><div className="theme-options">{showThemePresets.map((theme) => <button type="button" key={theme.id} className={themeInput.kind === "preset" && themeInput.id === theme.id ? "is-selected" : ""} onClick={() => { setThemeInput({ kind: "preset", id: theme.id }); setCustomVibe(""); }}>{theme.name}</button>)}</div><label className="custom-vibe">Or describe an original vibe<input value={customVibe} onFocus={() => setThemeInput({ kind: "custom", vibe: customVibe })} onChange={(event) => { setCustomVibe(event.target.value); setThemeInput({ kind: "custom", vibe: event.target.value }); }} placeholder="e.g. wry suburban cartoon, warm flat colors" maxLength={300} /></label></fieldset><textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Paste short study notes here..." aria-label="Study notes" /><div className="ingest-actions"><button onClick={() => setScreen("shows")} className="secondary">Browse 5 demo shows</button><button onClick={generateEpisode} disabled={liveLoading} className="primary">{liveLoading ? "ON AIR..." : "Generate episode"}</button></div><p className="quiet">Live generation is optional. Five themed demo shows need no API key.</p>{themeNotice && <p className="theme-notice">{themeNotice}</p>}</div></div>}
-            {screen === "shows" && <DemoShowCatalog onBack={() => setScreen("ingest")} onSelect={loadDemo} />}
+            {screen === "home" && <div className="home-screen"><div className="home-actions"><button type="button" onClick={() => setScreen("shows")} className="secondary">Browse 5 demo shows</button><button type="button" onClick={() => setScreen("ingest")} className="primary">Generate episode</button></div></div>}
+            {screen === "ingest" && <div className="ingest-screen"><ScreenHeader right="CREATE A NEW EPISODE" /><div className="ingest-body"><p className="eyebrow">CH 00</p><h1>Feed me your material.</h1><fieldset className="theme-picker"><legend>Choose your original show</legend><div className="theme-options">{showThemePresets.map((theme) => <button type="button" key={theme.id} className={themeInput.kind === "preset" && themeInput.id === theme.id ? "is-selected" : ""} onClick={() => { setThemeInput({ kind: "preset", id: theme.id }); setCustomVibe(""); }}>{theme.name}</button>)}</div><label className="custom-vibe">Or describe an original vibe<input value={customVibe} onFocus={() => setThemeInput({ kind: "custom", vibe: customVibe })} onChange={(event) => { setCustomVibe(event.target.value); setThemeInput({ kind: "custom", vibe: event.target.value }); }} placeholder="e.g. wry suburban cartoon, warm flat colors" maxLength={300} /></label></fieldset><textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Paste short study notes here..." aria-label="Study notes" /><div className="ingest-actions"><button onClick={() => setScreen("home")} className="secondary">← Back home</button><button onClick={generateEpisode} disabled={liveLoading} className="primary">{liveLoading ? "ON AIR..." : "Generate episode"}</button></div><p className="quiet">Live generation is optional. Five themed demo shows need no API key.</p>{themeNotice && <p className="theme-notice">{themeNotice}</p>}</div></div>}
+            {screen === "shows" && <DemoShowCatalog onBack={() => setScreen("home")} onSelect={loadDemo} />}
             {screen === "standby" && <div className="screen-center standby-screen"><p>PLEASE STAND BY</p><span>TONIGHT&apos;S EPISODE IS IN PRODUCTION</span></div>}
             {screen === "recap" && <div className="recap-screen"><ScreenHeader right="PREVIOUSLY ON..." /><div className="recap-body"><p className="eyebrow">WARM-UP BEFORE WE ROLL TAPE</p><h2>{episode.title}</h2><label>{scene.recap?.[0]?.prompt}<input value={recap} onChange={(event) => setRecap(event.target.value)} placeholder="your answer" /></label>{recapFeedback && <p className="feedback">{recapFeedback}</p>}<div className="ingest-actions"><button className="secondary" onClick={checkRecap}>Check</button><button className="primary" onClick={startEpisode}>Now airing - CH 03</button></div></div></div>}
-            {screen === "episode" && <div className={`episode-screen ${paused ? "is-paused" : ""} ${isBeat && beatRevealed && !paused ? "has-question" : ""} ${answeringOption ? "is-answering" : ""}`}><ScreenHeader right={isCommercial ? "COMMERCIAL BREAK" : "THE TOON BLOCK"} /><div className={`scene-art scene-${scene.type}`}><SceneIllustration scene={scene} narrating={narration === "playing" || narration === "fallback"} reaction={hostReaction} questionReady={isBeat && beatRevealed && !paused} visualOverride={visuals[scene.id] ?? bundledSceneArt} /></div><div className={`scene-cut ${sceneCut ? "is-active" : ""}`} aria-hidden="true" /><div className={`scene-copy ${isOutcome ? "has-refutation" : ""}`}><p className="speaker">{scene.speaker}</p>{captions && <p className="caption">{visibleLine}</p>}{isOutcome && <p className="refutation">↺ {scene.refutation}</p>}</div>{paused && <aside className="deep-dive"><p>PAUSED - DEEP DIVE</p><strong>{scene.deepDive ?? "Stay with the current scene, then answer the next beat."}</strong><button onClick={() => setPaused(false)}>Resume show</button></aside>}{isBeat && beatRevealed && !paused && <><div className="question-wash" aria-hidden="true" /><section className={`beat-card ${isCommercial ? "commercial" : ""}`} role="dialog" aria-modal="true" aria-labelledby={`question-${scene.id}`}><p>{answerRevealed ? "ANSWER REVEALED — TAKE THE CORRECT ROUTE" : isCommercial ? "SKIP THIS AD - answer a review question" : "SIGNAL LOCKED — THE SHOW NEEDS YOU"}</p><h2 id={`question-${scene.id}`}>{displayedQuestion}</h2><div className="options">{scene.beat!.options.map((option, index) => {
+            {screen === "episode" && <div className={`episode-screen ${paused ? "is-paused" : ""} ${isBeat && beatRevealed && !paused ? "has-question" : ""} ${answeringOption ? "is-answering" : ""}`}><ScreenHeader right={isCommercial ? "COMMERCIAL BREAK" : "THE TOON BLOCK"} action={{ label: "Exit show", onClick: () => setScreen("home") }} /><div className={`scene-art scene-${scene.type}`}><SceneIllustration scene={scene} narrating={narration === "playing" || narration === "fallback"} reaction={hostReaction} questionReady={isBeat && beatRevealed && !paused} visualOverride={visuals[scene.id] ?? bundledSceneArt} /></div><div className={`scene-cut ${sceneCut ? "is-active" : ""}`} aria-hidden="true" /><div className="scene-copy"><p className="speaker">{scene.speaker}</p>{captions && <p className="caption">{visibleLine}</p>}</div>{paused && <aside className="deep-dive"><p>PAUSED - DEEP DIVE</p><strong>{scene.deepDive ?? "Stay with the current scene, then answer the next beat."}</strong><button onClick={() => setPaused(false)}>Resume show</button></aside>}{isBeat && beatRevealed && !paused && <><div className="question-wash" aria-hidden="true" /><section className={`beat-card ${isCommercial ? "commercial" : ""}`} role="dialog" aria-modal="true" aria-labelledby={`question-${scene.id}`}><p>{answerRevealed ? "ANSWER REVEALED — TAKE THE CORRECT ROUTE" : isCommercial ? "SKIP THIS AD - answer a review question" : "SIGNAL LOCKED — THE SHOW NEEDS YOU"}</p><h2 id={`question-${scene.id}`}>{displayedQuestion}</h2><div className="options">{scene.beat!.options.map((option, index) => {
               const isSelected = answeringOption === option.id;
               const showCorrect = answerRevealed && option.isCorrect;
               return <button key={option.id} autoFocus={index === 0} className={isSelected || showCorrect ? `is-selected ${option.isCorrect ? "is-correct" : "is-wrong"}` : ""} disabled={Boolean(answeringOption) || answerRevealed} onClick={() => choose(option.id)}><span>{String.fromCharCode(65 + index)}</span><b>{option.text}</b>{isSelected && !answerRevealed && <em>ANSWER LOCKED</em>}{showCorrect && <em>CORRECT ANSWER</em>}</button>;
-            })}</div>{answerRevealed && <div className="answer-reveal" role="status"><strong>{wrongAttempt?.correctAnswer} is correct.</strong><span>{wrongAttempt?.explanation}</span><button className="continue-with-answer" onClick={continueWithAnswer}>Continue with answer ▶</button></div>}</section></>}{(isOutcome || rewindPlayback || !autoplay) && (!isBeat || !beatRevealed) && !isCliffhanger && !paused && <button onClick={continueLesson} className="continue" disabled={isOutcome && narration !== "complete"}>{isOutcome && narration !== "complete" ? "Feedback playing..." : rewindPlayback ? "Resume lesson" : isOutcome ? "Rewind & retry" : narration === "loading" || narration === "playing" || narration === "fallback" ? "Skip line" : hasMoreLesson ? "Next clue" : "Continue"} ▶</button>}{isCliffhanger && <section className="cliffhanger"><p>TO BE CONTINUED</p><h2>{episode.cliffhanger.teaser}</h2><span>Next episode airs in {episode.cliffhanger.airsAfterHours} hours</span><button onClick={() => setScreen("guide")}>See TV guide</button></section>}<p className="ai-voice-note">Narration available without an API key · captions carry all essential feedback</p></div>}
-            {screen === "guide" && <div className="guide-screen"><ScreenHeader right="SPACED REVIEW LINEUP" /><div className="guide-body"><p className="eyebrow">TV GUIDE</p><h2>Next on ReRun</h2><div className="guide-row"><b>CH 03</b><span>{episode.title}</span><i>WATCHED</i></div><div className="guide-row"><b>CH 03</b><span>{episode.cliffhanger.teaser}</span><i>+{episode.cliffhanger.airsAfterHours}h</i></div><div className="guide-row locked"><b>CH 07</b><span>The Buzz-In</span><i>COMING SOON</i></div><button className="primary" onClick={() => loadDemo()}>Watch again</button></div></div>}
+            })}</div>{answerRevealed && <div className="answer-reveal" role="status"><strong>{wrongAttempt?.correctAnswer} is correct.</strong><span>{wrongAttempt?.explanation}</span><button className="continue-with-answer" onClick={continueWithAnswer}>Continue with answer ▶</button></div>}</section></>}{(isOutcome ? narration === "complete" : !rewindPlayback && !autoplay) && (!isBeat || !beatRevealed) && !isCliffhanger && !paused && <button onClick={continueLesson} className="continue">{isOutcome ? "Rewind & retry" : narration === "loading" || narration === "playing" || narration === "fallback" ? "Skip line" : hasMoreLesson ? "Next clue" : "Continue"} ▶</button>}{isCliffhanger && <section className="cliffhanger"><p>TO BE CONTINUED</p><h2>{episode.cliffhanger.teaser}</h2><span>Next episode airs in {episode.cliffhanger.airsAfterHours} hours</span><button onClick={() => setScreen("guide")}>See TV guide</button></section>}<p className="ai-voice-note">Narration available without an API key · captions carry all essential feedback</p></div>}
+            {screen === "guide" && <div className="guide-screen"><ScreenHeader right={isDemoEpisode ? "DEMO PLAYLIST" : "YOUR SAVED EPISODES"} /><div className="guide-body"><p className="eyebrow">TV GUIDE</p><h2>Next on ReRun</h2><div className="guide-row"><b>CH 03</b><span>{episode.title}</span><i>WATCHED</i></div>{guideEpisodes.map((entry, index) => <button key={entry.id} className="guide-row guide-row-action" onClick={() => entry.kind === "demo" ? loadDemo(entry.show) : loadCachedEpisode(entry.episode)}><b>CH 03</b><span>{entry.title}</span><i>{index === 0 ? "WATCH NEXT" : "WATCH"}</i></button>)}{!isDemoEpisode && guideEpisodes.length === 0 && <div className="guide-empty"><p>No other saved episode is waiting.</p><button className="primary" onClick={() => setScreen("ingest")}>Generate a new episode</button></div>}<div className="guide-actions"><button className="primary" onClick={() => isDemoEpisode && activeDemoShow ? loadDemo(activeDemoShow) : loadCachedEpisode(episode)}>Watch again</button><button className="secondary" onClick={() => setScreen("home")}>← Return home</button></div></div></div>}
             {notice && <p className="notice" role="status">{notice}</p>}
           </div>
         </div>
@@ -679,6 +746,6 @@ function DemoShowCatalog({ onBack, onSelect }: { onBack: () => void; onSelect: (
   return <div className="show-catalog-screen"><ScreenHeader right="DEMO LIBRARY" /><div className="show-catalog"><div><p className="eyebrow">FIVE PILOT BROADCASTS</p><h1>Choose a show.</h1><p className="quiet">Five no-key pilots across biology, physics, and electronics — each teaches a different subject in its own animated style.</p></div><div className="show-cards">{demoShows.map((show) => <button key={show.id} type="button" className="show-card" style={{ "--show-primary": show.theme.palette[1], "--show-accent": show.theme.palette[3] ?? show.theme.palette[0] } as CSSProperties} onClick={() => onSelect(show)}><span className="show-card-swatch" aria-hidden="true" /><span><b>{show.title}</b><small>{show.theme.name}</small><em>{show.teaser}</em></span><i>WATCH ▶</i></button>)}</div><button type="button" className="secondary catalog-back" onClick={onBack}>← Back to studio</button></div></div>;
 }
 
-function ScreenHeader({ right }: { right: string }) {
-  return <header className="screen-header"><span>CH 03</span><span>{right}</span></header>;
+function ScreenHeader({ right, action }: { right: string; action?: { label: string; onClick: () => void } }) {
+  return <header className="screen-header"><span>CH 03</span><span className="screen-header-controls"><span>{right}</span>{action && <button type="button" className="exit-show" onClick={action.onClick}>{action.label}</button>}</span></header>;
 }
