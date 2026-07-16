@@ -19,7 +19,7 @@ describe("theme and art contracts", () => {
     expect(demoShows).toHaveLength(5);
     expect(new Set(demoShows.map((show) => show.theme.id)).size).toBe(5);
     expect(demoShows.every((show) => episodeSchema.safeParse(show.episode).success)).toBe(true);
-    expect(demoShows.every((show) => show.episode.scenes.length === 15)).toBe(true);
+    expect(demoShows.every((show) => show.episode.scenes.length === 17)).toBe(true);
     expect(new Set(demoShows.map((show) => show.episode.learningObjectives.map((objective) => objective.conceptKey).join(","))).size).toBe(5);
   });
 

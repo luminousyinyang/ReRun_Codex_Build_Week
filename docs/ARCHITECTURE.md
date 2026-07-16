@@ -1,45 +1,13 @@
 # Architecture
 
-## Boundary
-
-The application is a deterministic renderer around validated content. GPT-5.6 may author or evaluate educational content; it does not decide browser state, execute code, access secrets, or bypass the `EpisodeSpec` contract.
+ReRun is a deterministic player around validated episode data. Models may extract source material or author an `EpisodeSpec`; they never control browser state.
 
 ```text
-source text -> /api/ingest -> ConceptGraph -> /api/episode -> EpisodeSpec
-                                                       |                 |
-                                                       v                 v
-                                               asset/cache jobs     CRT Player
+notes or files -> /api/ingest -> editable source text -> /api/episode -> validated EpisodeSpec -> CRT player
 ```
 
-## Client
+`/api/ingest` receives multipart files. Plain text is read locally; PDFs/documents/slides use Responses file input, images use vision, and supported audio/video uses transcription. If text is too long, a constrained condensation pass preserves concepts, definitions, formulas, and examples before returning at most 12,000 editable characters.
 
-The React client owns the CRT shell, scene traversal, branch transitions, remote actions, captions, reduced-motion behavior, local anonymous attempts, and the technical-difficulties fallback. It accepts only validated episode data.
+`/api/episode` receives the final text plus a preset or original theme. It validates input, normalizes custom vibes, produces structured output, validates the result against the runtime schema, and returns actionable 422 errors for learner-fixable theme input. Provider failures remain a generic unavailable result.
 
-## Server route contracts
-
-| Route | Input | Success | Failure / fallback |
-| --- | --- | --- | --- |
-| `/api/ingest` | `{ text }` | `ConceptGraph` | rejects empty/oversize/non-educational input; client offers demo |
-| `/api/episode` | `{ text, themeInput }` | validated `EpisodeSpec`, normalized `ShowTheme` | custom vibes are sanitized/moderated; then controlled unavailable result |
-| `/api/tts` | `{ text, voice?, instructions? }` | streamed MP3 narration | `voice` is a validated built-in TTS voice; the zero-key demo first uses bundled MP3s when present, then browser speech synthesis, then a visible timed fallback |
-| `/api/scene-image` | validated scene + sanitized `ShowTheme` | SSE preview/final JPEG events | bounded session cache; renderer keeps its local fallback |
-| `/api/beat/eval` | answer + rubric + scoped beat | `{ verdict, feedback, misconceptionKey? }` | P1 only; P0 MCQs are local/deterministic |
-| `/api/rewind` | scene, level, excluded analogies | replacement line object | retain original line and report unavailable if generation fails |
-| `/api/callin` | episode context + learner message | streaming Socratic reply | P1 only; never reveal the answer |
-| `/api/schedule` | attempts/concept state | due concepts / airtime | local FSRS-lite fallback |
-
-All mutation-like routes enforce input limits, server-side secret access, structured output validation, and request cancellation. Do not pass raw learner material to client-visible logs.
-
-## Content pipeline
-
-1. **Curriculum parser:** source text to a small `ConceptGraph` of objectives, facts, prerequisites, and misconceptions.
-2. **Showrunner:** graph slice plus difficulty and channel to `EpisodeSpec` JSON through structured output.
-3. **Validator:** Zod parses output; one constrained repair attempt may fix schema defects.
-4. **Assets:** the fixture references bundled original scene art and optional host motion layers; no media-generation request is needed during a demo. Live art uses a server-compiled flat-cel prompt, streams a preview/final JPEG pair, and is cached only in the browser session plus a bounded process cache. The renderer always keeps a local fallback visible while artwork is generated.
-5. **Broadcast:** player begins only from a fully validated fixture/spec.
-
-## Storage and reliability
-
-P0 stores anonymous progress locally and bundles the demo fixture in the repository. Future Supabase tables are `courses`, `episodes`, `attempts`, `concept_state`, and `schedule`; persistence is not a P0 dependency. Cache entries must be disposable and must not be required for the demo.
-
-When a live dependency fails, show the themed error state, preserve entered text only locally where safe, and expose **Watch the demo**. Never silently substitute unrelated generated material.
+The client owns scene traversal, narration, retries, pause/play, channel navigation, captions, mute, local ratings, and localStorage saved episodes. Bundled demo MP3s and art make the five pilots work without a key. Live scene art is optional and never blocks playback.

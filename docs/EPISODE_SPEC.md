@@ -46,7 +46,7 @@ The Structured Outputs transport schema uses the same shape, with optional runti
 
 ## Round 6 demo-library contract
 
-The no-key library ships five independent 21-scene, three-act episodes. These are content contracts, not merely theme skins.
+The no-key library ships five independent 17-scene, three-act episodes. These are content contracts, not merely theme skins.
 
 | Show ID | Topic | Episode difficulty |
 | --- | --- | --- |

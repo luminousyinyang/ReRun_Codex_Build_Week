@@ -48,10 +48,10 @@ describe("Round 6 bundled demo fixtures", () => {
     expect(new Set(demoShows.map((show) => show.episode.scenes[0]?.recap?.[0]?.prompt)).size).toBe(5);
   });
 
-  it("makes every pilot a valid, reachable 15-scene three-act learning story", () => {
+  it("makes every pilot a valid, reachable 17-scene three-act learning story", () => {
     for (const { episode } of demoShows) {
       expect(episodeSchema.safeParse(episode).success).toBe(true);
-      expect(episode.scenes).toHaveLength(15);
+      expect(episode.scenes).toHaveLength(17);
       expect(episode.scenes[0]).toMatchObject({ id: "recap", type: "recap" });
       expect(episode.scenes.at(-1)).toMatchObject({ type: "cliffhanger" });
       expect(episode.learningObjectives).toHaveLength(3);

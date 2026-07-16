@@ -62,7 +62,7 @@ export const episodeBaseSchema = z.object({
   episodeId: z.string().min(1),
   courseId: z.string().min(1),
   title: z.string().min(1),
-  channel: z.literal(3),
+  channel: z.number().int().min(2).max(99),
   format: z.literal("toon"),
   difficulty: z.number().int().min(1).max(5),
   theme: showThemeSchema.optional(),
@@ -328,7 +328,7 @@ export type DemoShow = {
   topic: string;
   theme: ShowTheme;
   episode: EpisodeSpec;
-  art: { teaching: string; challenge: string };
+  art: { teaching: string; challenge: string; host?: { idle: string; talk: string; retry: string } };
 };
 
 type PilotBeat = {
@@ -464,15 +464,15 @@ function teachingFor(beat: PilotBeat, phase: "introduce" | "retrieve" | "review"
 function narrativeSupport(line: string) {
   return {
     line,
-    deepDive: line,
-    simpler: line,
-    simplerAgain: line,
+    deepDive: `${line} Look for the detail that makes this moment matter.`,
+    simpler: `Think of it as one small step in the story: ${line}`,
+    simplerAgain: "Keep the next move simple, then continue the broadcast.",
   };
 }
 
 function buildPilot(pilot: Pilot): DemoShow {
   const theme = getPresetTheme(pilot.themeId);
-  const [conceptOne, conceptTwo, , conceptThree, integration, finale] = pilot.beats;
+  const [conceptOne, conceptTwo, retrieve, conceptThree, integration, finale] = pilot.beats;
   const objectives = pilot.objectives.map((objective, index) => ({ id: `lo-${index + 1}`, conceptKey: objective.key, text: objective.text }));
   const makeBeat = (beat: PilotBeat, onCorrect: string, level: number, phase: "introduce" | "retrieve" | "review", type: "beat" | "commercial" = "beat") => {
     const lesson = teachingFor(beat, phase);
@@ -515,7 +515,7 @@ function buildPilot(pilot: Pilot): DemoShow {
     episodeId: `demo-${pilot.id}`,
     courseId: `demo-${pilot.id}`,
     title: pilot.title,
-    channel: 3,
+    channel: ({ "photon-frontier": 4, "cellular-casefile": 5, "power-up-plant-lab": 6, "tiny-lightkeepers": 7, "chloroplast-quest": 8 } as Record<string, number>)[pilot.id] ?? 3,
     format: "toon",
     difficulty: pilot.difficulty,
     theme,
@@ -529,9 +529,11 @@ function buildPilot(pilot: Pilot): DemoShow {
       { id: "act-1-open", type: "narrative", background: `${pilot.subject}, act one discovery`, speaker: pilot.host, ...narrativeSupport(pilot.actLines[0]), next: `beat-${conceptOne.key}` },
       makeBeat(conceptOne, "act-2-open", pilot.difficulty, "introduce"),
       makeOutcome(conceptOne),
-      { id: "act-2-open", type: "narrative", background: `${pilot.subject}, act two investigation`, speaker: pilot.host, ...narrativeSupport(pilot.actLines[2]), next: `beat-${conceptTwo.key}` },
-      makeBeat(conceptTwo, "act-3-open", pilot.difficulty, "introduce"),
+      { id: "act-2-open", type: "narrative", background: `${pilot.subject}, act two investigation`, speaker: pilot.host, ...narrativeSupport(pilot.actLines[1]), next: `beat-${conceptTwo.key}` },
+      makeBeat(conceptTwo, `beat-${retrieve.key}`, pilot.difficulty, "introduce"),
       makeOutcome(conceptTwo),
+      makeBeat(retrieve, "act-3-open", pilot.difficulty, "retrieve"),
+      makeOutcome(retrieve),
       { id: "act-3-open", type: "narrative", background: `${pilot.subject}, act three plan`, speaker: pilot.host, ...narrativeSupport(pilot.actLines[3]), next: `beat-${conceptThree.key}` },
       makeBeat(conceptThree, `beat-${integration.key}`, pilot.difficulty, "introduce"),
       makeOutcome(conceptThree),
@@ -549,7 +551,7 @@ function buildPilot(pilot: Pilot): DemoShow {
     teaser: pilot.teaser,
     topic: pilot.topic,
     theme,
-    art: { teaching: `/assets/demo-shows/${pilot.id}-teaching.jpg`, challenge: `/assets/demo-shows/${pilot.id}-challenge.jpg` },
+    art: { teaching: `/assets/demo-shows/${pilot.id}-teaching.jpg`, challenge: `/assets/demo-shows/${pilot.id}-challenge.jpg`, host: { idle: `/assets/motion/${pilot.id}-idle.png`, talk: `/assets/motion/${pilot.id}-talk.png`, retry: `/assets/motion/${pilot.id}-retry.png` } },
     episode,
   };
 }
@@ -602,7 +604,7 @@ const pilots: Pilot[] = [
     ] },
 ];
 
-/** Five independent no-key pilots: each is a tight three-act, 15-scene episode. */
+/** Five independent no-key pilots: each is a tight three-act, 17-scene episode. */
 export const demoShows: DemoShow[] = pilots.map(buildPilot);
 
 /** The studio's initial episode remains a full fixture, not a shared clone. */

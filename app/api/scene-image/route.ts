@@ -67,8 +67,8 @@ export async function POST(request: Request) {
         const prompt = buildSceneArtPrompt(payload.scene, payload.theme);
         const reference = await referenceFile(payload.referenceDataUrl);
         const imageStream = reference
-          ? await client.images.edit({ model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-2", image: reference, prompt: `${prompt} Match the reference image's palette and linework.`, quality: "low", size: "1536x1024", output_format: "jpeg", output_compression: 78, stream: true, partial_images: 1 })
-          : await client.images.generate({ model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-2", prompt, quality: "low", size: "1536x1024", output_format: "jpeg", output_compression: 78, stream: true, partial_images: 1 });
+          ? await client.images.edit({ model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-2", image: reference, prompt: `${prompt} Match the reference image's palette and linework.`, quality: "low", size: "1536x1024", output_format: "jpeg", output_compression: 78, stream: true, partial_images: 2 })
+          : await client.images.generate({ model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-2", prompt, quality: "low", size: "1536x1024", output_format: "jpeg", output_compression: 78, stream: true, partial_images: 2 });
 
         for await (const item of imageStream) {
           const dataUrl = `data:image/jpeg;base64,${item.b64_json}`;

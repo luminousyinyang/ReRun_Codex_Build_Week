@@ -5,8 +5,10 @@ import { demoEpisode, demoShows, episodeSchema, type DemoShow, type EpisodeSpec,
 import { SceneIllustration } from "@/components/scene-illustration";
 import { defaultTheme, showThemePresets, type ShowTheme, type ThemeInput } from "@/lib/theme";
 import { bundledDemoAudioFile } from "@/lib/demo-audio-manifest";
+import { MAX_STUDY_CHARS, MIN_STUDY_CHARS } from "@/lib/limits";
+import { loadLiveEpisodeArt, saveLiveEpisodeArt } from "@/lib/live-art-cache";
 
-type Screen = "off" | "boot" | "static" | "home" | "ingest" | "shows" | "standby" | "recap" | "episode" | "guide";
+type Screen = "off" | "boot" | "static" | "home" | "ingest" | "standby" | "artwork" | "recap" | "episode" | "guide";
 type Narration = "idle" | "loading" | "playing" | "fallback" | "complete";
 type NarrationTransport = "audio" | "speech" | "timer" | null;
 type PlayerBeat = NonNullable<Scene["beat"]> & {
@@ -21,6 +23,17 @@ type WrongAttempt = {
   explanation: string;
 };
 
+type StoredEpisode = {
+  episode: unknown;
+  savedAt: number;
+};
+
+type ArtProgress = {
+  ready: number;
+  total: number;
+  failed: number;
+};
+
 type AudioBus = {
   context: AudioContext;
   master: GainNode;
@@ -29,7 +42,14 @@ type AudioBus = {
   oscillators: OscillatorNode[];
 };
 
-const GENERATED_EPISODES_CACHE_KEY = "rerun.generated-episodes.v1";
+const GENERATED_EPISODES_CACHE_KEY = "rerun.generated-episodes.v2";
+const GENERATED_EPISODE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const ART_RENDER_CONCURRENCY = 4;
+const FILE_ACCEPT = ".txt,.md,.markdown,.pdf,.docx,.pptx,.csv,.png,.jpg,.jpeg,.webp,.gif,.mp3,.mp4,.mpeg,.mpga,.m4a,.wav,.webm";
+
+function channelLabel(channel: number) {
+  return `CH ${String(channel).padStart(2, "0")}`;
+}
 
 function getAudioContext() {
   const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -113,7 +133,16 @@ function seededShuffle<T>(items: readonly T[], seed: number): T[] {
   return result;
 }
 
-async function streamSceneArt(scene: Scene, theme: ShowTheme, referenceDataUrl: string | undefined, onImage: (url: string) => void) {
+function waitForImage(url: string) {
+  return new Promise<boolean>((resolve) => {
+    const image = new Image();
+    image.onload = () => resolve(true);
+    image.onerror = () => resolve(false);
+    image.src = url;
+  });
+}
+
+async function streamSceneArt(scene: Scene, theme: ShowTheme, referenceDataUrl: string | undefined, onImage: (url: string, isFinal: boolean) => void) {
   const response = await fetch("/api/scene-image", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -133,10 +162,17 @@ async function streamSceneArt(scene: Scene, theme: ShowTheme, referenceDataUrl: 
       const name = /^event: ([^\n]+)/m.exec(packet)?.[1];
       const data = /^data: (.+)$/m.exec(packet)?.[1];
       if (!data) continue;
-      const payload = JSON.parse(data) as { dataUrl?: string };
-      if ((name === "preview" || name === "final") && payload.dataUrl) {
-        onImage(payload.dataUrl);
-        if (name === "final") final = payload.dataUrl;
+      const payload = JSON.parse(data) as { dataUrl?: string; message?: string };
+      if (name === "error") throw new Error(payload.message ?? "Scene art unavailable");
+      // Image partials arrive far sooner than the final high-resolution render.
+      // Only use one after the browser has decoded it, so the opening never
+      // flashes a broken image while the final render continues in background.
+      if (name === "preview" && payload.dataUrl && await waitForImage(payload.dataUrl)) {
+        onImage(payload.dataUrl, false);
+      }
+      if (name === "final" && payload.dataUrl) {
+        final = payload.dataUrl;
+        onImage(payload.dataUrl, true);
       }
     }
     if (done) break;
@@ -152,6 +188,7 @@ export function ReRunPlayer() {
   const [notes, setNotes] = useState("");
   const [recap, setRecap] = useState("");
   const [recapFeedback, setRecapFeedback] = useState("");
+  const [recapAttempts, setRecapAttempts] = useState(0);
   const [rewindLevel, setRewindLevel] = useState(0);
   const [ratings, setRatings] = useState<boolean[]>([]);
   const [captions, setCaptions] = useState(true);
@@ -163,9 +200,13 @@ export function ReRunPlayer() {
   const [answerRevealed, setAnswerRevealed] = useState(false);
   const [notice, setNotice] = useState("");
   const [liveLoading, setLiveLoading] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const [fileManifest, setFileManifest] = useState<Array<{ name: string; characters: number }>>([]);
+  const [standbyStatus, setStandbyStatus] = useState("Casting your host…");
   const [themeInput, setThemeInput] = useState<ThemeInput>({ kind: "preset", id: defaultTheme.id });
   const [customVibe, setCustomVibe] = useState("");
   const [themeNotice, setThemeNotice] = useState("");
+  const [lastPresetTheme, setLastPresetTheme] = useState(defaultTheme.id);
   const [narration, setNarration] = useState<Narration>("idle");
   const [beatRevealed, setBeatRevealed] = useState(false);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
@@ -176,6 +217,8 @@ export function ReRunPlayer() {
   const [rewindPlayback, setRewindPlayback] = useState(false);
   const [generatedEpisodes, setGeneratedEpisodes] = useState<EpisodeSpec[]>([]);
   const [generatedEpisodesLoaded, setGeneratedEpisodesLoaded] = useState(false);
+  const [artProgress, setArtProgress] = useState<ArtProgress>({ ready: 0, total: 0, failed: 0 });
+  const visualsRef = useRef<Record<string, string>>({});
   const audioCache = useRef(new Map<string, string>());
   const objectUrls = useRef(new Set<string>());
   const narrationTimer = useRef<number | null>(null);
@@ -191,6 +234,9 @@ export function ReRunPlayer() {
   const autoplayDeadline = useRef(0);
   const autoplayRemaining = useRef(1_600);
   const preserveRewindForScene = useRef<string | null>(null);
+  const skipTeachForScene = useRef<string | null>(null);
+  const fileInput = useRef<HTMLInputElement | null>(null);
+  const savedAtByEpisodeId = useRef(new Map<string, number>());
 
   const scene = useMemo(() => findScene(episode, sceneId), [episode, sceneId]);
   const activeDemoShow = useMemo(() => demoShows.find((show) => show.episode.episodeId === episode.episodeId), [episode.episodeId]);
@@ -226,11 +272,18 @@ export function ReRunPlayer() {
 
   useEffect(() => {
     try {
-      const cached = JSON.parse(window.localStorage.getItem(GENERATED_EPISODES_CACHE_KEY) ?? "[]") as unknown;
+      const cached = JSON.parse(window.localStorage.getItem(GENERATED_EPISODES_CACHE_KEY) ?? window.localStorage.getItem("rerun.generated-episodes.v1") ?? "[]") as unknown;
       if (Array.isArray(cached)) {
+        const now = Date.now();
         setGeneratedEpisodes(cached.flatMap((candidate) => {
-          const parsed = episodeSchema.safeParse(candidate);
-          return parsed.success && !parsed.data.courseId.startsWith("demo-") ? [parsed.data] : [];
+          const record = candidate && typeof candidate === "object" && "episode" in candidate
+            ? candidate as Partial<StoredEpisode>
+            : { episode: candidate, savedAt: now };
+          const savedAt = typeof record.savedAt === "number" ? record.savedAt : now;
+          const parsed = episodeSchema.safeParse(record.episode);
+          if (!parsed.success || parsed.data.courseId.startsWith("demo-") || now - savedAt > GENERATED_EPISODE_TTL_MS) return [];
+          savedAtByEpisodeId.current.set(parsed.data.episodeId, savedAt);
+          return [parsed.data];
         }));
       }
     } catch {
@@ -243,14 +296,20 @@ export function ReRunPlayer() {
   useEffect(() => {
     if (!generatedEpisodesLoaded) return;
     try {
-      window.localStorage.setItem(GENERATED_EPISODES_CACHE_KEY, JSON.stringify(generatedEpisodes));
+      const now = Date.now();
+      window.localStorage.setItem(GENERATED_EPISODES_CACHE_KEY, JSON.stringify(generatedEpisodes.map((savedEpisode) => ({
+        episode: savedEpisode,
+        savedAt: savedAtByEpisodeId.current.get(savedEpisode.episodeId) ?? now,
+      }))));
     } catch {
       // The episode remains available for this session if browser storage is full.
     }
   }, [generatedEpisodes, generatedEpisodesLoaded]);
 
   useEffect(() => {
-    setLessonIndex(0);
+    const skipTeach = skipTeachForScene.current === scene.id;
+    setLessonIndex(skipTeach ? Math.max(0, lessonUnits.length - 1) : 0);
+    if (skipTeach) skipTeachForScene.current = null;
     setRewindPlayback(false);
     if (preserveRewindForScene.current === scene.id) {
       preserveRewindForScene.current = null;
@@ -258,7 +317,7 @@ export function ReRunPlayer() {
       setRewindLevel(0);
     }
     setBeatRevealed(false);
-  }, [scene.id]);
+  }, [scene.id, lessonUnits.length]);
 
   useEffect(() => {
     if (screen !== "boot") return;
@@ -277,8 +336,14 @@ export function ReRunPlayer() {
 
   useEffect(() => {
     if (screen !== "standby") return;
-    const timer = window.setTimeout(() => setScreen("recap"), 850);
-    return () => window.clearTimeout(timer);
+    const statuses = ["Casting your host…", "Writing Act 2…", "Placing the cliffhanger…", "Tuning the broadcast…"];
+    let index = 0;
+    setStandbyStatus(statuses[index]);
+    const timer = window.setInterval(() => {
+      index = (index + 1) % statuses.length;
+      setStandbyStatus(statuses[index]);
+    }, 2_100);
+    return () => window.clearInterval(timer);
   }, [screen]);
 
   useEffect(() => {
@@ -525,26 +590,67 @@ export function ReRunPlayer() {
   }, []);
 
   useEffect(() => {
-    if (episode.courseId !== "live-notes" || !episode.theme) return;
+    // A model can author any non-demo courseId. Generated shows are identified
+    // by not being one of the bundled demo courses, so fresh art always starts.
+    if (episode.courseId.startsWith("demo-") || !episode.theme) return;
     let cancelled = false;
     const candidates = episode.scenes.filter((candidate) => candidate.type !== "recap");
-    const render = async (candidate: Scene, reference?: string) => streamSceneArt(candidate, episode.theme!, reference, (url) => {
-      if (!cancelled) setVisuals((current) => ({ ...current, [candidate.id]: url }));
+    const savedAt = savedAtByEpisodeId.current.get(episode.episodeId) ?? Date.now();
+    const preflight = screen === "artwork";
+    const render = async (candidate: Scene, reference?: string) => streamSceneArt(candidate, episode.theme!, reference, (url, isFinal) => {
+      if (cancelled) return;
+      const nextVisuals = { ...visualsRef.current, [candidate.id]: url };
+      visualsRef.current = nextVisuals;
+      setVisuals(nextVisuals);
+      // Keep only completed art for the seven-day replay cache. A partial is a
+      // fast on-screen preview, not an asset we want to restore tomorrow.
+      if (isFinal) void saveLiveEpisodeArt(episode.episodeId, savedAt, nextVisuals).catch(() => undefined);
     });
     void (async () => {
-      try {
-        const styleKey = candidates[0] ? await render(candidates[0]) : undefined;
-        const queue = candidates.slice(1);
-        await Promise.all(Array.from({ length: Math.min(2, queue.length) }, async () => {
-          while (queue.length) {
-            const candidate = queue.shift();
-            if (candidate) await render(candidate, styleKey);
-          }
-        }));
-      } catch {
-        // Local art remains visible; a live render should never interrupt playback.
+      // Restore completed art before rendering anything. On a replay this keeps
+      // the show visually intact immediately and avoids new image API calls.
+      const storedVisuals: Record<string, string> = await loadLiveEpisodeArt(episode.episodeId, GENERATED_EPISODE_TTL_MS).catch(() => ({}));
+      if (cancelled) return;
+      visualsRef.current = storedVisuals;
+      setVisuals(storedVisuals);
+      const cachedSceneIds = new Set(candidates.filter((candidate) => storedVisuals[candidate.id]).map((candidate) => candidate.id));
+      setArtProgress({ ready: cachedSceneIds.size, total: candidates.length, failed: 0 });
+
+      let styleKey = candidates[0] ? storedVisuals[candidates[0].id] : undefined;
+      let firstFailure: unknown;
+      const queue = candidates.filter((candidate) => !storedVisuals[candidate.id]);
+      if (!styleKey && queue[0]) {
+        try {
+          styleKey = await render(queue.shift()!);
+          if (!cancelled) setArtProgress((current) => ({ ...current, ready: current.ready + 1 }));
+        } catch (error) {
+          // Continue without a reference plate. One failed render must not
+          // prevent the rest of a live episode from receiving new artwork.
+          firstFailure = error;
+          if (!cancelled) setArtProgress((current) => ({ ...current, failed: current.failed + 1 }));
+        }
       }
-    })();
+      await Promise.all(Array.from({ length: Math.min(2, queue.length) }, async () => {
+        while (queue.length) {
+          const candidate = queue.shift();
+          if (!candidate) continue;
+          try {
+            await render(candidate, styleKey);
+            if (!cancelled) setArtProgress((current) => ({ ...current, ready: current.ready + 1 }));
+          } catch (error) {
+            firstFailure ??= error;
+            if (!cancelled) setArtProgress((current) => ({ ...current, failed: current.failed + 1 }));
+          }
+        }
+      }));
+      if (firstFailure && !cancelled) {
+        const detail = firstFailure instanceof Error ? firstFailure.message : "please try this episode again.";
+        setNotice(`Some original scene art could not be drawn: ${detail}`);
+      }
+      if (preflight && !cancelled) setScreen("recap");
+    })().catch((error) => {
+      if (!cancelled) setNotice(`Original scene art is unavailable: ${error instanceof Error ? error.message : "please try this episode again."}`);
+    });
     return () => { cancelled = true; };
   }, [episode]);
 
@@ -558,6 +664,7 @@ export function ReRunPlayer() {
     setSceneId("recap");
     setRecap("");
     setRecapFeedback("");
+    setRecapAttempts(0);
     setRatings([]);
     setRewindLevel(0);
     setAnsweringOption(null);
@@ -567,9 +674,11 @@ export function ReRunPlayer() {
     // A show paused before the learner left it must not carry that pause (and its
     // half-started narration) into the next show they open.
     setPaused(false);
+    visualsRef.current = {};
     setVisuals({});
+    setArtProgress({ ready: 0, total: nextEpisode.scenes.filter((candidate) => candidate.type !== "recap").length, failed: 0 });
     setThemeNotice("");
-    setScreen("recap");
+    setScreen(nextEpisode.courseId.startsWith("demo-") ? "recap" : "artwork");
     setNotice(notice);
   }
 
@@ -591,36 +700,44 @@ export function ReRunPlayer() {
   }
 
   async function generateEpisode() {
-    if (notes.trim().length < 80) {
+    if (notes.trim().length < MIN_STUDY_CHARS) {
       setNotice("Paste a little more material (at least 80 characters), or load the demo course.");
       return;
     }
     setLiveLoading(true);
-    setNotice("The network is shaping your notes into an episode...");
+    setNotice("");
+    setScreen("standby");
     try {
-      const selectedTheme = themeInput.kind === "custom" ? { kind: "custom" as const, vibe: customVibe } : themeInput;
+      const selectedTheme = themeInput.kind === "custom" && customVibe.trim().length >= 3
+        ? { kind: "custom" as const, vibe: customVibe.trim() }
+        : { kind: "preset" as const, id: lastPresetTheme };
       const response = await fetch("/api/episode", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: notes, themeInput: selectedTheme }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error ?? "Episode unavailable");
       setEpisode(result.episode);
+      savedAtByEpisodeId.current.set(result.episode.episodeId, Date.now());
       setGeneratedEpisodes((current) => [
         result.episode,
         ...current.filter((candidate) => candidate.episodeId !== result.episode.episodeId),
       ]);
       setThemeNotice(result.themeNotice ?? "");
+      visualsRef.current = {};
       setVisuals({});
+      setArtProgress({ ready: 0, total: result.episode.scenes.filter((candidate: Scene) => candidate.type !== "recap").length, failed: 0 });
       setSceneId("recap");
       setRecap("");
       setRecapFeedback("");
+      setRecapAttempts(0);
       setRatings([]);
       setRewindLevel(0);
       setAnsweringOption(null);
       setWrongAttempt(null);
       setAnswerRevealed(false);
       setHostReaction(null);
-      setScreen("recap");
+      setScreen("artwork");
       setNotice("Your notes are now on air.");
     } catch (error) {
+      setScreen("ingest");
       setNotice(`${error instanceof Error ? error.message : "Live generation is unavailable"} Watch the bundled demo instead.`);
     } finally {
       setLiveLoading(false);
@@ -630,7 +747,15 @@ export function ReRunPlayer() {
   function checkRecap() {
     const answers = scene.recap?.[0]?.answers ?? [];
     const correct = answers.some((answer) => recap.toLowerCase().includes(answer.toLowerCase()));
-    setRecapFeedback(correct ? "Correct - roll tape!" : `Close. The answer is ${answers[0] ?? "in the episode"}.`);
+    if (correct) {
+      setRecapFeedback("Correct — roll tape!");
+      return;
+    }
+    setRecapAttempts((attempts) => {
+      const next = attempts + 1;
+      setRecapFeedback(next >= 2 ? `That one was ${answers[0] ?? "in the episode"}. Keep it in mind as the show begins.` : "Not quite — think back to the last episode and try once more.");
+      return next;
+    });
   }
 
   function startEpisode() {
@@ -650,9 +775,16 @@ export function ReRunPlayer() {
   }
 
   function advance() {
+    if (screen !== "episode") return;
     if (scene.next) {
+      if (scene.type === "branch_outcome") {
+        preserveRewindForScene.current = scene.next;
+        skipTeachForScene.current = scene.next;
+        setRewindLevel(1);
+      } else {
+        setRewindLevel(0);
+      }
       setSceneId(scene.next);
-      setRewindLevel(0);
       setPaused(false);
       setBeatRevealed(false);
       setHostReaction(null);
@@ -661,6 +793,7 @@ export function ReRunPlayer() {
   }
 
   function continueLesson() {
+    if (screen !== "episode") return;
     if (hasMoreLesson) {
       setLessonIndex((current) => current + 1);
       return;
@@ -740,6 +873,7 @@ export function ReRunPlayer() {
   }
 
   function rewind() {
+    if (screen !== "episode") return;
     if (!scene.simpler && !displayedBeat?.simplerQuestion) {
       setNotice("This scene has no simpler take. Try the next question instead.");
       return;
@@ -752,10 +886,38 @@ export function ReRunPlayer() {
     setBeatRevealed(false);
   }
 
+  async function ingestFiles(files: FileList | File[]) {
+    const selected = Array.from(files);
+    if (!selected.length) return;
+    const unsupportedMov = selected.find((file) => /\.mov$/i.test(file.name));
+    if (unsupportedMov) {
+      setNotice(`${unsupportedMov.name} is a .mov file. Export it as mp4 or webm, then try again.`);
+      return;
+    }
+    setExtracting(true);
+    setNotice("");
+    try {
+      const form = new FormData();
+      selected.forEach((file) => form.append("files", file));
+      const response = await fetch("/api/ingest", { method: "POST", body: form });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "We couldn't read those files.");
+      setNotes(result.sourceText);
+      setFileManifest(result.manifest ?? []);
+      setNotice(result.notice ?? (result.condensed ? "Your files were condensed to fit the episode format." : "Study material is ready to edit."));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "We couldn't read those files.");
+    } finally {
+      setExtracting(false);
+      if (fileInput.current) fileInput.current.value = "";
+    }
+  }
+
   const isBeat = Boolean(scene.beat);
   const isOutcome = scene.type === "branch_outcome";
   const isCommercial = scene.type === "commercial";
   const isCliffhanger = scene.type === "cliffhanger";
+  const playbackReady = screen === "episode";
 
   return (
     <main className="room" style={{ "--theme-primary": activeTheme.palette[1], "--theme-accent": activeTheme.palette[3] ?? activeTheme.palette[0], "--theme-ink": activeTheme.palette.at(-1) } as CSSProperties}>
@@ -766,35 +928,31 @@ export function ReRunPlayer() {
             {screen === "off" && <div className="screen-center off-screen"><p>Your notes are about to go on air</p><span className="power-light" /><span>PRESS POWER</span></div>}
             {screen === "boot" && <div className="boot-screen" aria-label="Television powering on"><i className="boot-line" /></div>}
             {screen === "static" && <div className="static-screen" aria-label="Broadcast signal tuning" />}
-            {screen === "home" && <HomeScreen onSelect={loadDemo} onGenerate={() => setScreen("ingest")} onBrowse={() => setScreen("shows")} />}
-            {screen === "ingest" && <div className="ingest-screen"><ScreenHeader right="CREATE A NEW EPISODE" /><div className="ingest-body"><p className="eyebrow">CH 00</p><h1>Feed me your material.</h1><fieldset className="theme-picker"><legend>Choose your original show</legend><div className="theme-options">{showThemePresets.map((theme) => <button type="button" key={theme.id} className={themeInput.kind === "preset" && themeInput.id === theme.id ? "is-selected" : ""} onClick={() => { setThemeInput({ kind: "preset", id: theme.id }); setCustomVibe(""); }}>{theme.name}</button>)}</div><label className="custom-vibe">Or describe an original vibe<input value={customVibe} onFocus={() => setThemeInput({ kind: "custom", vibe: customVibe })} onChange={(event) => { setCustomVibe(event.target.value); setThemeInput({ kind: "custom", vibe: event.target.value }); }} placeholder="e.g. wry suburban cartoon, warm flat colors" maxLength={300} /></label></fieldset><textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Paste short study notes here..." aria-label="Study notes" /><div className="ingest-actions"><button onClick={() => setScreen("home")} className="secondary">← Back home</button><button onClick={generateEpisode} disabled={liveLoading} className="primary">{liveLoading ? "ON AIR..." : "Generate episode"}</button></div><p className="quiet">Live generation is optional. Five themed demo shows need no API key.</p>{themeNotice && <p className="theme-notice">{themeNotice}</p>}</div></div>}
-            {screen === "shows" && <DemoShowCatalog onBack={() => setScreen("home")} onSelect={loadDemo} />}
-            {screen === "standby" && <div className="screen-center standby-screen"><p>PLEASE STAND BY</p><span>TONIGHT&apos;S EPISODE IS IN PRODUCTION</span></div>}
-            {screen === "recap" && <div className="recap-screen"><ScreenHeader right="PREVIOUSLY ON..." /><div className="recap-body"><p className="eyebrow">WARM-UP BEFORE WE ROLL TAPE</p><h2>{episode.title}</h2><label>{scene.recap?.[0]?.prompt}<input value={recap} onChange={(event) => setRecap(event.target.value)} placeholder="your answer" /></label>{recapFeedback && <p className="feedback">{recapFeedback}</p>}<div className="ingest-actions"><button className="secondary" onClick={checkRecap}>Check</button><button className="primary" onClick={startEpisode}>Now airing - CH 03</button></div></div></div>}
-            {screen === "episode" && <div className={`episode-screen ${paused ? "is-paused" : ""} ${isBeat && beatRevealed && !paused ? "has-question" : ""} ${answeringOption ? "is-answering" : ""}`}><ScreenHeader right={isCommercial ? "COMMERCIAL BREAK" : "THE TOON BLOCK"} action={{ label: "Exit show", onClick: goHome }} /><div className={`scene-art scene-${scene.type}`}><SceneIllustration scene={scene} narrating={narration === "playing" || narration === "fallback"} reaction={hostReaction} questionReady={isBeat && beatRevealed && !paused} visualOverride={visuals[scene.id] ?? bundledSceneArt} /></div><div className={`scene-cut ${sceneCut ? "is-active" : ""}`} aria-hidden="true" /><div className="scene-copy"><p className="speaker">{scene.speaker}</p>{captions && !(isBeat && beatRevealed && !paused) && <p className="caption">{visibleLine}</p>}</div>{paused && <aside className="deep-dive"><p>PAUSED - DEEP DIVE</p><strong>{scene.deepDive ?? "Stay with the current scene, then answer the next beat."}</strong><button onClick={() => setPaused(false)}>Resume show</button></aside>}{isBeat && beatRevealed && !paused && <><div className="question-wash" aria-hidden="true" /><section className={`beat-card ${isCommercial ? "commercial" : ""}`} role="dialog" aria-modal="true" aria-labelledby={`question-${scene.id}`}><p>{answerRevealed ? "ANSWER REVEALED — TAKE THE CORRECT ROUTE" : isCommercial ? "SKIP THIS AD - answer a review question" : "SIGNAL LOCKED — THE SHOW NEEDS YOU"}</p><h2 id={`question-${scene.id}`}>{displayedQuestion}</h2><div className="options">{displayedOptions.map((option, index) => {
+            {screen === "home" && <HomeScreen onSelect={loadDemo} savedEpisodes={generatedEpisodes} onSelectSaved={loadCachedEpisode} onGenerate={() => setScreen("ingest")} />}
+            {screen === "ingest" && <div className="ingest-screen"><ScreenHeader channel={3} right="CREATE A NEW EPISODE" /><div className="ingest-body"><p className="eyebrow">YOUR NOTES · ON AIR</p><h1>Feed me your material.</h1><fieldset className="theme-picker"><legend>Choose your original show</legend><div className="theme-options">{showThemePresets.map((theme) => <button type="button" key={theme.id} className={lastPresetTheme === theme.id && (!customVibe.trim() || themeInput.kind === "preset") ? "is-selected" : ""} onClick={() => { setThemeInput({ kind: "preset", id: theme.id }); setLastPresetTheme(theme.id); setCustomVibe(""); }}>{theme.name}</button>)}</div><label className="custom-vibe">Or describe an original vibe<input value={customVibe} onFocus={() => setThemeInput({ kind: "custom", vibe: customVibe })} onChange={(event) => { setCustomVibe(event.target.value); setThemeInput({ kind: "custom", vibe: event.target.value }); }} placeholder="e.g. wry suburban cartoon, warm flat colors" maxLength={300} /></label></fieldset><input ref={fileInput} className="file-input" type="file" accept={FILE_ACCEPT} multiple onChange={(event) => void ingestFiles(event.target.files ?? [])} /><button type="button" className="file-dropzone" onClick={() => fileInput.current?.click()} disabled={extracting}>＋ {extracting ? "READING FILES..." : "Add PDF / slides / photo / recording"}</button><p className="quiet">PDF, PPTX, DOCX, photos, audio, video, and text files. .mov: export as mp4 or webm.</p><textarea value={notes} maxLength={MAX_STUDY_CHARS} onChange={(event) => setNotes(event.target.value)} placeholder="Paste short study notes here, or add files above..." aria-label="Study notes" /><div className="notes-meta"><span>{notes.length.toLocaleString()}/{MAX_STUDY_CHARS.toLocaleString()} characters · {MIN_STUDY_CHARS} minimum</span>{fileManifest.map((file) => <span key={file.name}>{file.name} → {file.characters.toLocaleString()} characters</span>)}</div><div className="ingest-actions"><button onClick={() => setScreen("home")} className="secondary">← Back home</button><button onClick={generateEpisode} disabled={liveLoading || extracting} className="primary">{liveLoading ? "ON AIR..." : "Generate episode"}</button></div><p className="quiet">Live generation is optional. Five themed demo shows need no API key.</p>{themeNotice && <p className="theme-notice">{themeNotice}</p>}</div></div>}
+            {screen === "standby" && <div className="screen-center standby-screen"><p>PLEASE STAND BY</p><span>TONIGHT&apos;S EPISODE IS IN PRODUCTION</span><strong>{standbyStatus}</strong></div>}
+            {screen === "artwork" && <div className="screen-center standby-screen"><p>ILLUSTRATING THE FULL BROADCAST</p><span>{artProgress.ready}/{artProgress.total} ORIGINAL BACKGROUNDS READY</span><strong>{artProgress.failed ? `${artProgress.failed} scene${artProgress.failed === 1 ? "" : "s"} will use the backup set.` : "Saving every scene for your 7-day replay…"}</strong></div>}
+            {screen === "recap" && <div className="recap-screen"><ScreenHeader channel={episode.channel} right="PREVIOUSLY ON..." /><div className="recap-body"><p className="eyebrow">WARM-UP BEFORE WE ROLL TAPE</p><h2>{episode.title}</h2><label>{scene.recap?.[0]?.prompt}<input value={recap} onChange={(event) => setRecap(event.target.value)} placeholder="your answer" /></label>{recapFeedback && <p className="feedback">{recapFeedback}</p>}<div className="ingest-actions"><button className="secondary" onClick={checkRecap}>Check</button><button className="primary" onClick={startEpisode}>▶ Roll the episode</button></div></div></div>}
+            {screen === "episode" && <div className={`episode-screen ${paused ? "is-paused" : ""} ${isBeat && beatRevealed && !paused ? "has-question" : ""} ${answeringOption ? "is-answering" : ""}`}><ScreenHeader channel={episode.channel} right={isCommercial ? "COMMERCIAL BREAK" : "THE TOON BLOCK"} action={{ label: "Exit show", onClick: goHome }} /><div className={`scene-art scene-${scene.type}`}><SceneIllustration scene={scene} narrating={narration === "playing" || narration === "fallback"} reaction={hostReaction} questionReady={isBeat && beatRevealed && !paused} visualOverride={visuals[scene.id] ?? bundledSceneArt} host={activeDemoShow?.art.host} /></div><div className={`scene-cut ${sceneCut ? "is-active" : ""}`} aria-hidden="true" /><div className="scene-copy"><p className="speaker">{scene.speaker}</p>{captions && !(isBeat && beatRevealed && !paused) && <p className="caption">{visibleLine}</p>}</div>{paused && <aside className="deep-dive"><p>PAUSED - DEEP DIVE</p><strong>{scene.deepDive ?? "Stay with the current scene, then answer the next beat."}</strong><button onClick={() => setPaused(false)}>Resume show</button></aside>}{isBeat && beatRevealed && !paused && <><div className="question-wash" aria-hidden="true" /><section className={`beat-card ${isCommercial ? "commercial" : ""}`} role="dialog" aria-modal="true" aria-labelledby={`question-${scene.id}`}><p>{answerRevealed ? "ANSWER REVEALED — TAKE THE CORRECT ROUTE" : isCommercial ? "SKIP THIS AD - answer a review question" : "SIGNAL LOCKED — THE SHOW NEEDS YOU"}</p><h2 id={`question-${scene.id}`}>{displayedQuestion}</h2><div className="options">{displayedOptions.map((option, index) => {
               const isSelected = answeringOption === option.id;
               const showCorrect = answerRevealed && option.isCorrect;
               return <button key={option.id} autoFocus={index === 0} className={isSelected || showCorrect ? `is-selected ${option.isCorrect ? "is-correct" : "is-wrong"}` : ""} disabled={Boolean(answeringOption) || answerRevealed} onClick={() => choose(option.id)}><span>{String.fromCharCode(65 + index)}</span><b>{option.text}</b>{isSelected && !answerRevealed && <em>ANSWER LOCKED</em>}{showCorrect && <em>CORRECT ANSWER</em>}</button>;
-            })}</div>{answerRevealed && <div className="answer-reveal" role="status"><strong>{wrongAttempt?.correctAnswer} is correct.</strong><span>{wrongAttempt?.explanation}</span><button className="continue-with-answer" onClick={continueWithAnswer}>Continue with answer ▶</button></div>}</section></>}{(isOutcome ? narration === "complete" : !rewindPlayback && !autoplay) && (!isBeat || !beatRevealed) && !isCliffhanger && !paused && <button onClick={continueLesson} className="continue">{isOutcome ? "Rewind & retry" : narration === "loading" || narration === "playing" || narration === "fallback" ? "Skip line" : hasMoreLesson ? "Next clue" : "Continue"} ▶</button>}{isCliffhanger && <section className="cliffhanger"><p>TO BE CONTINUED</p><h2>{episode.cliffhanger.teaser}</h2><span>Next episode airs in {episode.cliffhanger.airsAfterHours} hours</span><button onClick={() => setScreen("guide")}>See TV guide</button></section>}<p className="ai-voice-note">Narration available without an API key · captions carry all essential feedback</p></div>}
-            {screen === "guide" && <div className="guide-screen"><ScreenHeader right={isDemoEpisode ? "DEMO PLAYLIST" : "YOUR SAVED EPISODES"} /><div className="guide-body"><p className="eyebrow">TV GUIDE</p><h2>Next on ReRun</h2><div className="guide-row"><b>CH 03</b><span>{episode.title}</span><i>WATCHED</i></div>{guideEpisodes.map((entry, index) => <button key={entry.id} className="guide-row guide-row-action" onClick={() => entry.kind === "demo" ? loadDemo(entry.show) : loadCachedEpisode(entry.episode)}><b>CH 03</b><span>{entry.title}</span><i>{index === 0 ? "WATCH NEXT" : "WATCH"}</i></button>)}{!isDemoEpisode && guideEpisodes.length === 0 && <div className="guide-empty"><p>No other saved episode is waiting.</p><button className="primary" onClick={() => setScreen("ingest")}>Generate a new episode</button></div>}<div className="guide-actions"><button className="primary" onClick={() => isDemoEpisode && activeDemoShow ? loadDemo(activeDemoShow) : loadCachedEpisode(episode)}>Watch again</button><button className="secondary" onClick={goHome}>← Return home</button></div></div></div>}
+            })}</div>{answerRevealed && <div className="answer-reveal" role="status"><strong>{wrongAttempt?.correctAnswer} is correct.</strong><span>{wrongAttempt?.explanation}</span><button className="continue-with-answer" onClick={continueWithAnswer}>Continue with answer ▶</button></div>}</section></>}{(isOutcome ? narration === "complete" : !rewindPlayback) && (!isBeat || !beatRevealed) && !isCliffhanger && !paused && <button onClick={continueLesson} className="continue">{isOutcome ? "Rewind & retry" : narration === "loading" || narration === "playing" || narration === "fallback" ? "Skip line" : hasMoreLesson ? "Next clue" : "Continue"} ▶</button>}{isCliffhanger && <section className="cliffhanger"><p>TO BE CONTINUED</p><h2>{episode.cliffhanger.teaser}</h2><span>Next episode airs in {episode.cliffhanger.airsAfterHours} hours</span><button onClick={() => setScreen("guide")}>See TV guide</button></section>}<p className="ai-voice-note">Narration available without an API key · captions carry all essential feedback</p></div>}
+            {screen === "guide" && <div className="guide-screen"><ScreenHeader channel={episode.channel} right={isDemoEpisode ? "DEMO PLAYLIST" : "YOUR SAVED EPISODES"} /><div className="guide-body"><p className="eyebrow">TV GUIDE</p><h2>Next on ReRun</h2><div className="guide-row"><b>{channelLabel(episode.channel)}</b><span>{episode.title}</span><i>WATCHED</i></div>{guideEpisodes.map((entry, index) => <button key={entry.id} className="guide-row guide-row-action" onClick={() => entry.kind === "demo" ? loadDemo(entry.show) : loadCachedEpisode(entry.episode)}><b>{channelLabel(entry.kind === "demo" ? entry.show.episode.channel : entry.episode.channel)}</b><span>{entry.title}</span><i>{index === 0 ? "WATCH NEXT" : "WATCH"}</i></button>)}{!isDemoEpisode && guideEpisodes.length === 0 && <div className="guide-empty"><p>No other saved episode is waiting.</p><button className="primary" onClick={() => setScreen("ingest")}>Generate a new episode</button></div>}<div className="guide-actions"><button className="primary" onClick={() => isDemoEpisode && activeDemoShow ? loadDemo(activeDemoShow) : loadCachedEpisode(episode)}>Watch again</button><button className="secondary" onClick={goHome}>← Return home</button></div></div></div>}
             {notice && <p className="notice" role="status">{notice}</p>}
           </div>
         </div>
       </section>
-      <aside className="remote" aria-label="Remote control"><div className="remote-brand"><b>ReRun</b><span>NETWORK</span></div><button className="power" onClick={power} aria-label={screen === "off" ? "Power on television" : "Power off television"}>⏻</button><div className="ratings"><span>RATINGS</span><strong>{accuracy === null ? "---" : `${accuracy}%`}</strong><div>{[1,2,3,4,5].map((pip) => <i key={pip} className={pip <= Math.ceil((accuracy ?? 0) / 20) ? "on" : ""} />)}</div></div><div className="remote-grid"><button onClick={() => setPaused(true)}>Pause</button><button onClick={rewind}>◀◀ RWD</button><button onClick={() => setAutoplay((value) => !value)} aria-pressed={autoplay}>AUTO {autoplay ? "ON" : "OFF"}</button><button onClick={() => setNotice("CH 07 and CH 11 are scheduled for P1.")}>CH ▲▼</button></div><button className="callin" onClick={() => setNotice("Call-in is a P1 Socratic feature. The host will never reveal an answer.")}>☎ Call-in</button><div className="remote-footer"><button onClick={() => setCaptions((value) => !value)}>CC {captions ? "ON" : "OFF"}</button><button onClick={() => setMuted((value) => !value)}>{muted ? "🔇" : "🔊"}</button></div></aside>
+      <aside className="remote" aria-label="Remote control"><div className="remote-brand"><b>ReRun</b><span>NETWORK</span></div><button className="power" onClick={power} aria-label={screen === "off" ? "Power on television" : "Power off television"}>⏻</button><div className="ratings"><span>ANSWER ACCURACY</span><strong>{accuracy === null ? "---" : `${accuracy}%`}</strong><div>{[1,2,3,4,5].map((pip) => <i key={pip} className={pip <= Math.ceil((accuracy ?? 0) / 20) ? "on" : ""} />)}</div></div><div className="remote-grid"><button onClick={() => setPaused((value) => !value)} disabled={!playbackReady} aria-pressed={paused}>{paused ? "▶ Play" : "❚❚ Pause"}</button><button onClick={rewind} disabled={!playbackReady}>◀◀ RWD</button><button onClick={continueLesson} disabled={!playbackReady}>▶▶ FFWD</button><button onClick={() => setAutoplay((value) => !value)} disabled={!playbackReady} aria-pressed={autoplay}>AUTO {autoplay ? "ON" : "OFF"}</button></div><div className="remote-footer"><button onClick={() => setCaptions((value) => !value)}>CC {captions ? "ON" : "OFF"}</button><button onClick={() => setMuted((value) => !value)}>{muted ? "🔇" : "🔊"}</button></div></aside>
       <p className="build-note">Education demo • retrieval practice, feedback, adaptive re-explanation • no account required</p>
     </main>
   );
 }
 
-function HomeScreen({ onSelect, onGenerate, onBrowse }: { onSelect: (show: DemoShow) => void; onGenerate: () => void; onBrowse: () => void }) {
-  return <div className="home-screen"><header className="home-marquee"><span className="home-brand">ReRun</span><span className="home-dial">CH 03 · TV GUIDE</span></header><div className="home-body"><p className="eyebrow">TONIGHT&apos;S LINEUP</p><h1>Pick a show, or make your own.</h1><div className="lineup">{demoShows.map((show) => <button key={show.id} type="button" className="lineup-card" style={{ "--show-primary": show.theme.palette[1], "--show-accent": show.theme.palette[3] ?? show.theme.palette[0] } as CSSProperties} onClick={() => onSelect(show)}><span className="lineup-art"><img src={show.art.teaching} alt="" loading="lazy" /><i className="lineup-topic">{show.topic}</i></span><span className="lineup-meta"><b>{show.title}</b><small>{show.theme.name}</small></span><span className="lineup-badge">WATCH ▶</span></button>)}</div><div className="home-footer"><button type="button" className="primary home-generate" onClick={onGenerate}>＋ Generate an episode from your notes</button><button type="button" className="secondary" onClick={onBrowse}>Browse as a list</button></div><p className="quiet">Five themed demo shows need no API key. Live generation is optional.</p></div></div>;
+function HomeScreen({ onSelect, savedEpisodes, onSelectSaved, onGenerate }: { onSelect: (show: DemoShow) => void; savedEpisodes: EpisodeSpec[]; onSelectSaved: (episode: EpisodeSpec) => void; onGenerate: () => void }) {
+  return <div className="home-screen"><header className="home-marquee"><span className="home-brand">ReRun</span><span className="home-dial">TV GUIDE</span></header><div className="home-body"><p className="eyebrow">TONIGHT&apos;S LINEUP</p><h1>Pick a show, or make your own.</h1><div className="lineup">{demoShows.map((show) => <button key={show.id} type="button" className="lineup-card" style={{ "--show-primary": show.theme.palette[1], "--show-accent": show.theme.palette[3] ?? show.theme.palette[0] } as CSSProperties} onClick={() => onSelect(show)}><span className="lineup-art"><img src={show.art.teaching} alt="" loading="lazy" /><i className="lineup-topic">{show.topic}</i></span><span className="lineup-meta"><b>{show.title}</b><small>{channelLabel(show.episode.channel)} · {show.theme.name}</small></span><span className="lineup-badge">WATCH ▶</span></button>)}</div>{savedEpisodes.length > 0 && <section className="home-saved"><p className="eyebrow">YOUR RECENT EPISODES · SAVED FOR 7 DAYS</p><div className="lineup">{savedEpisodes.map((savedEpisode) => <button key={savedEpisode.episodeId} type="button" className="lineup-card saved-episode-card" onClick={() => onSelectSaved(savedEpisode)}><span className="saved-episode-mark">REPLAY</span><span className="lineup-meta"><b>{savedEpisode.title}</b><small>{channelLabel(savedEpisode.channel)} · Your generated show</small></span><span className="lineup-badge">WATCH ▶</span></button>)}</div></section>}<div className="home-create"><p className="eyebrow">OR PUT YOUR OWN NOTES ON AIR</p><button type="button" className="primary home-generate" onClick={onGenerate}>＋ Generate an episode from your notes — PDFs, slides, photos, and recordings welcome</button></div><p className="quiet">Five themed demo shows need no API key. Live generation is optional.</p></div></div>;
 }
 
-function DemoShowCatalog({ onBack, onSelect }: { onBack: () => void; onSelect: (show: DemoShow) => void }) {
-  return <div className="show-catalog-screen"><ScreenHeader right="DEMO LIBRARY" /><div className="show-catalog"><div><p className="eyebrow">FIVE PILOT BROADCASTS</p><h1>Choose a show.</h1><p className="quiet">Five no-key pilots across biology, physics, and electronics — each teaches a different subject in its own animated style.</p></div><div className="show-cards">{demoShows.map((show) => <button key={show.id} type="button" className="show-card" style={{ "--show-primary": show.theme.palette[1], "--show-accent": show.theme.palette[3] ?? show.theme.palette[0] } as CSSProperties} onClick={() => onSelect(show)}><span className="show-card-swatch" aria-hidden="true" /><span><b>{show.title}</b><small>{show.topic} · {show.theme.name}</small><em>{show.teaser}</em></span><i>WATCH ▶</i></button>)}</div><button type="button" className="secondary catalog-back" onClick={onBack}>← Back to studio</button></div></div>;
-}
-
-function ScreenHeader({ right, action }: { right: string; action?: { label: string; onClick: () => void } }) {
-  return <header className="screen-header"><span>CH 03</span><span className="screen-header-controls"><span>{right}</span>{action && <button type="button" className="exit-show" onClick={action.onClick}>{action.label}</button>}</span></header>;
+function ScreenHeader({ channel, right, action }: { channel: number; right: string; action?: { label: string; onClick: () => void } }) {
+  return <header className="screen-header"><span>{channelLabel(channel)}</span><span className="screen-header-controls"><span>{right}</span>{action && <button type="button" className="exit-show" onClick={action.onClick}>{action.label}</button>}</span></header>;
 }

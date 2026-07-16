@@ -26,7 +26,7 @@ Typography: **VT323** for OSD/utility labels, **Righteous** (used sparingly) for
 
 ## Motion and sound
 
-Use CRT bloom on power-on, then the Player prototype’s CRT boot line and brief gray static tuning screen with a short white-noise cue. Story scenes narrate themselves: voiceover plays with caption text, and the host uses original flat-cel idle, talking, and retry plates with restrained whole-character motion. Autoplay defaults on only for ordinary narrative scenes; show a visible “Up next” affordance for its 1.6-second dwell, and let the remote turn it off. Beats, commercials, branch outcomes, and answer reveals always wait for the learner. Pausing freezes the pending dwell. Use VHS tracking during rewind and restrained applause/buzzer feedback. Respect `prefers-reduced-motion`: remove decorative animation while preserving the state transition, voice, and captions. AI narration is disclosed in-product; captions and visible state changes carry all essential feedback.
+Use CRT bloom on power-on, then the Player prototype’s CRT boot line and brief gray static tuning screen with a short white-noise cue. Story scenes narrate themselves: voiceover plays with caption text, and each pilot uses original flat-cel host art with restrained whole-character motion. Autoplay advances ordinary narrative scenes after its short dwell and the remote can turn it off. Beats, branch outcomes, and answer reveals always wait for the learner. Pausing freezes pending narration and dwell. Respect `prefers-reduced-motion`: remove decorative animation while preserving the state transition, voice, and captions. AI narration is disclosed in-product; captions and visible state changes carry all essential feedback.
 
 ### Scene performance layers
 

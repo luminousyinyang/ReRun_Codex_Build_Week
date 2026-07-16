@@ -1,94 +1,40 @@
 # ReRun
 
-**Appointment television for your homework.** ReRun turns study material into an interactive retro-TV episode: the plot pauses at question beats, wrong answers play out as memorable consequences, and rewind gives a simpler explanation instead of replaying the same one.
+**Appointment television for your homework.** ReRun turns notes into an interactive retro-TV episode: it teaches before it asks, pauses for retrieval, and adapts a retry after a miss.
 
-ReRun is being built for the **OpenAI Build Week 2026 - Education** category. It is designed for high-school, college, and self-directed learners who want a more active alternative to passive study media.
+The no-key demo is fully playable offline: five original, voiced pilots, bundled MP3 narration, original scene/host art, captions, deterministic option shuffle, and local saved-episode storage. The media bundle is intentionally checked in so a judge can experience the full loop without an API key or a network call.
 
-> Status: the bundled demo is a no-key interactive broadcast. Each question follows a learner-paced micro-lesson, and the voice-aware narration catalog and asset prerender pipeline cover its authored teaching and rewind lines across all five pilots. Until the checked-in MP3 bundle is rendered with `OPENAI_API_KEY`, demo playback falls directly to browser speech or its visible timer rather than calling live TTS. Configured OpenAI routes add AI narration, live scene art, and original-show themes with their own validated TTS voice and delivery direction for pasted notes.
+## Judge path
 
-## The missing visual layer
+Power on, select any show from the lineup, complete the recap, watch the teaching steps and persistent lower-third, intentionally miss a question, then select **Rewind & retry**. The corrective branch returns to the authored simpler question after one cue; a second miss reveals the answer. The remote’s pause/play, rewind, fast-forward, channel, captions, mute, and ratings controls all operate real player state.
 
-AI study podcasts can make material easier to listen to. ReRun is their visual, interactive complement: it turns source material into a television episode where learners see a concept in context, answer to keep the plot moving, and encounter a visible consequence or simpler re-explanation when needed.
+Each pilot occupies its own channel (CH 04–08). The Act 2 retrieval check and finale are both part of the aired path.
 
-It is not a passive video generator, and it does not claim that a visual format is best for every learner. The demonstrated value is an active learning loop inside a deliberately visual narrative.
+## Bring your own material
 
-## Why ReRun
+Paste notes or add text, PDF, DOCX, PPTX, CSV, photo, audio, or video files. Extracted text is placed back into the editable notes box before generation. Audio/video must be under 25 MB; `.mov` should be exported as mp4 or webm. On Vercel, large uploads can exceed platform request limits, so the full multi-file demo is best shown locally.
 
-The product's learning loop is deliberately active:
-
-1. A learner supplies short notes or picks one of five bundled, topic-specific pilots.
-2. The CRT television first presents a short, learner-paced teaching sequence: a hook, plain-language definition, concrete analogy or example, and misconception contrast. A persistent lower-third keeps a key term or formula visible. Only then does it stop at a question beat.
-3. A correct response advances the plot. An incorrect response plays out the mistaken logic, gives an accurate correction, and enables an explicit retry.
-4. Rewind requests a simpler explanation and a genuinely simpler rewording of the question. After two misses, the correct answer is revealed and the learner explicitly continues. Commercial breaks double as review questions.
-5. The episode ends with a cliffhanger and an estimated review time.
-
-This makes the demonstrated experience about retrieval practice, immediate corrective feedback, adaptive re-explanation, and spaced review - not passive AI consumption. ReRun does not claim that it replaces a teacher, tutor, or validated learning intervention.
-
-## Judge-first demo mode
-
-The P0 release includes five bundled deterministic pilots: circuits/Ohm's law, organelles, Newton's laws/forces, water cycle, and light reactions/Calvin-cycle setup. They require no API key, external media generation, account, or network call. The canonical judge path intentionally demonstrates the whole loop:
-
-`power on -> choose a pilot -> recap -> CH 03 -> choose an incorrect answer -> consequence -> rewind -> simpler question -> commercial review -> cumulative finale -> cliffhanger`
-
-Live generation is an enhancement for short pasted notes only. If configuration or a generation request is unavailable, the app must say so plainly and offer the bundled demo; it must never strand a learner in a loading state.
-
-See [the judge guide](docs/DEMO_AND_JUDGE_GUIDE.md) for the expected path and [the implementation plan](docs/BUILD_PLAN.md) for scope.
+Configured live generation uses GPT-5.6 and an original-theme guardrail. The production **Please Stand By** screen remains visible while it works and returns actionable input errors to the editor.
 
 ## Run locally
 
 ```bash
 npm install
-cp .env.example .env.local # optional; demo mode works without it
 npm run dev
 ```
 
-Open `http://localhost:3000`, choose **Browse 5 demo shows**, then pick any pilot and complete the judge path above. Autoplay is on by default for ordinary narrative scenes; it shows an “Up next” dwell and can be turned off at any time. Do not commit `.env.local`; `.gitignore` protects secrets while preserving `.env.example`.
+Open `http://localhost:3000`. No `.env` file is needed for the bundled demo. Add `OPENAI_API_KEY` only for live generation, extraction, narration, or scene art.
 
-## Architecture at a glance
+## Verification
 
-The renderer owns presentation and navigation. The model may author validated content but does not execute UI behavior.
+```bash
+npm run typecheck
+npm run test
+npm run build
+```
 
-`notes/PDF text -> ConceptGraph -> EpisodeSpec -> deterministic CRT renderer`
+See [the judge guide](docs/DEMO_AND_JUDGE_GUIDE.md), [architecture](docs/ARCHITECTURE.md), and [test plan](docs/TEST_PLAN.md).
 
-- **Client:** CRT shell, remote controls, subtitles, motion/audio preferences, and branching beat engine.
-- **Server:** structured episode generation, TTS narration, safe original-theme normalization, and streamed scene-art routes.
-- **Reliability:** Zod validation, one repair retry for generated structures, cached/bundled demo assets, and clear fallback states.
+## Safety
 
-Five no-key pilots make the show-format choice explorable immediately: **The Circuit Frontier** teaches circuits and Ohm's law, **The Cellular Casefile** organelles, **The Force Squad** Newton's laws and forces, **The Raindrop Trail** the water cycle, and **The Chloroplast Quest** light reactions and Calvin-cycle setup. Each is an independent 21-scene, three-act episode with three taught concepts, a 3–5-step teaching sequence before every check, an Act 2 retrieval review, and a cumulative finale. Calculation checks include a worked example before the learner applies the method to a new value. Configured live episodes use a sanitized original theme, stream matching scene art without blocking playback, and retain deterministic fallback art if a request fails. Each theme selects a supported built-in TTS voice plus original delivery direction; `npm run prerender:demo-audio` writes the checked-in bundle for every authored demo narration line.
-
-The full contract is in [Architecture](docs/ARCHITECTURE.md) and [EpisodeSpec v1](docs/EPISODE_SPEC.md).
-
-## Documentation
-
-- [Build plan](docs/BUILD_PLAN.md)
-- [Product specification](docs/PRODUCT_SPEC.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [EpisodeSpec v1 and bundled-pilot contract](docs/EPISODE_SPEC.md)
-- [Scene authoring guide](docs/SCENE_AUTHORING.md)
-- [Design system](docs/DESIGN_SYSTEM.md)
-- [Demo and judge guide](docs/DEMO_AND_JUDGE_GUIDE.md)
-- [Test plan](docs/TEST_PLAN.md)
-- [Devpost submission guide](docs/DEVPOST_SUBMISSION.md)
-- [Codex work log](CODEX_LOG.md)
-
-## Accessibility and safety
-
-The remote is keyboard-operable, focus-visible, caption-first, responsive, and respectful of `prefers-reduced-motion`. Generated educational content must be classroom-safe, age-appropriate, accurate within the supplied source material, free of real-person impersonation, and must not reveal an answer when the learner asks for a hint.
-
-All shipped art, voices, sound, and video must be original, appropriately licensed, or generated for ReRun. Do not use third-party characters, trademarks, copyrighted music, or unlicensed study-video footage.
-
-## Built with Codex + GPT-5.6
-
-Codex is used to plan, scaffold, implement, test, and document the project. GPT-5.6 is the runtime intelligence for structured curriculum parsing, episode authoring, rubric-grounded evaluation, misconception-aware feedback, adaptive rewind explanations, and constrained Socratic call-in assistance. Each model output is bounded by a documented schema and is rendered by deterministic application code.
-
-`CODEX_LOG.md` records meaningful, human-reviewed milestones. It is evidence of the process, not a substitute for the required `/feedback` session ID in the Devpost form.
-
-## Testing and deployment
-
-The test requirements cover schema validation, learning-flow branching, zero-key demo integration, accessibility, and a clean-machine judge run. Read [the test plan](docs/TEST_PLAN.md) before shipping.
-
-Deploy to Vercel only after the demo works from a fresh browser profile. The release and submission requirements are in [the Devpost guide](docs/DEVPOST_SUBMISSION.md).
-
-## License
-
-See [LICENSE](LICENSE). ReRun remains a working name pending final trademark/name review by the project owner.
+ReRun is study support, not grading or a substitute for instruction. Generated content is constrained to supplied material and uses original, classroom-safe themes; the app does not imitate named characters, artists, or studios.

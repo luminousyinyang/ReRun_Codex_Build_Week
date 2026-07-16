@@ -1,4 +1,5 @@
 import type { Scene } from "@/lib/episode";
+import type { SyntheticEvent } from "react";
 import { CharacterRig } from "@/components/character-rig";
 
 type SceneIllustrationProps = {
@@ -7,6 +8,7 @@ type SceneIllustrationProps = {
   reaction?: "celebrate" | "retry" | null;
   questionReady?: boolean;
   visualOverride?: string;
+  host?: { idle: string; talk: string; retry: string };
 };
 
 const visualFallbacks = {
@@ -23,25 +25,33 @@ const hostPlates = {
 };
 
 function resolveVisual(scene: Scene) {
-  if (scene.visualAsset) return scene.visualAsset;
+  // `visualAsset` is model-authored metadata for live episodes. Only trust a
+  // known public asset path; labels such as `toon_vitamin_d_fact_cards` are not
+  // URLs and would otherwise create a broken localhost image request.
+  if (scene.visualAsset?.startsWith("/assets/")) return scene.visualAsset;
   if (scene.type === "commercial") return visualFallbacks.commercial;
   if (scene.type === "cliffhanger") return visualFallbacks.cliffhanger;
   if (scene.type === "branch_outcome" || /vault|canister|energy/i.test(scene.background)) return visualFallbacks.vault;
   return visualFallbacks.sunlight;
 }
 
-export function SceneIllustration({ scene, narrating = false, reaction = null, questionReady = false, visualOverride }: SceneIllustrationProps) {
-  const visual = visualOverride ?? resolveVisual(scene);
-  const performance = scene.type === "cliffhanger" ? undefined : hostPlates;
+export function SceneIllustration({ scene, narrating = false, reaction = null, questionReady = false, visualOverride, host }: SceneIllustrationProps) {
+  const fallbackVisual = resolveVisual(scene);
+  const visual = visualOverride ?? fallbackVisual;
+  const restoreFallback = (event: SyntheticEvent<HTMLImageElement>) => {
+    if (event.currentTarget.src.endsWith(fallbackVisual)) return;
+    event.currentTarget.src = fallbackVisual;
+  };
+  const performance = scene.type === "cliffhanger" ? undefined : host ?? hostPlates;
   const shot = scene.beat ? "decision" : scene.type === "commercial" ? "review" : scene.type === "branch_outcome" ? "consequence" : scene.type === "cliffhanger" ? "storm" : /vault|canister|energy/i.test(scene.background) ? "discovery" : "teaching";
 
   return (
     <div className={`generated-scene generated-scene-${scene.type} shot-${shot} ${performance ? "has-performance" : ""}`} aria-hidden="true">
-      <img src={visual} alt="" className="scene-backdrop" />
-      <img src={visual} alt="" className="scene-image" />
-      <div className="scene-depth-slice scene-depth-sky"><img src={visual} alt="" /></div>
-      <div className="scene-depth-slice scene-depth-mid"><img src={visual} alt="" /></div>
-      <div className="scene-depth-slice scene-depth-foreground-plate"><img src={visual} alt="" /></div>
+      <img src={visual} alt="" className="scene-backdrop" onError={restoreFallback} />
+      <img src={visual} alt="" className="scene-image" onError={restoreFallback} />
+      <div className="scene-depth-slice scene-depth-sky"><img src={visual} alt="" onError={restoreFallback} /></div>
+      <div className="scene-depth-slice scene-depth-mid"><img src={visual} alt="" onError={restoreFallback} /></div>
+      <div className="scene-depth-slice scene-depth-foreground-plate"><img src={visual} alt="" onError={restoreFallback} /></div>
       <div className="scene-foreground" />
       <div className="scene-light-rays"><i /><i /><i /></div>
       <div className="scene-haze"><i /><i /><i /></div>

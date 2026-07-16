@@ -10,7 +10,7 @@
 
 ## Round 6 episode recipe
 
-Author a complete 21-scene, three-act learning story—not a skin of another subject.
+Author a complete 17-scene, three-act learning story—not a skin of another subject.
 
 | Act | Learning purpose | Required evidence |
 | --- | --- | --- |

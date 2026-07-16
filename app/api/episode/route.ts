@@ -3,14 +3,15 @@ import { zodTextFormat } from "openai/helpers/zod";
 import { NextResponse } from "next/server";
 import { episodeResponseSchema, episodeSchema, validateLiveEpisode } from "@/lib/episode";
 import { defaultTheme, getPresetTheme, normalizeCustomVoiceDirection, showThemeSchema, themeInputSchema, type ShowTheme } from "@/lib/theme";
+import { MAX_STUDY_CHARS, MIN_STUDY_CHARS } from "@/lib/limits";
 
-const MAX_CHARS = 12_000;
+class UserFacingError extends Error {}
 
 const ipTerms = /\b(family guy|disney|pixar|marvel|star wars|pokemon|simpsons|south park|studio ghibli|dreamworks)\b/gi;
 
 async function resolveTheme(client: OpenAI, input: unknown): Promise<{ theme: ShowTheme; notice?: string }> {
   const parsed = themeInputSchema.safeParse(input ?? { kind: "preset", id: defaultTheme.id });
-  if (!parsed.success) throw new Error("Choose a preset theme or describe a short original-show vibe.");
+  if (!parsed.success) throw new UserFacingError("Choose a preset theme or describe a short original-show vibe.");
   if (parsed.data.kind === "preset") return { theme: getPresetTheme(parsed.data.id) };
 
   const blockedTerms = Array.from(new Set(parsed.data.vibe.match(ipTerms) ?? []));
@@ -23,9 +24,9 @@ async function resolveTheme(client: OpenAI, input: unknown): Promise<{ theme: Sh
     text: { format: zodTextFormat(showThemeSchema, "rerun_theme") },
   });
   const draft = response.output_parsed ? showThemeSchema.parse(response.output_parsed) : null;
-  if (!draft) throw new Error("The custom show vibe could not be normalized.");
+  if (!draft) throw new UserFacingError("The custom show vibe could not be normalized.");
   const moderation = await client.moderations.create({ model: "omni-moderation-latest", input: JSON.stringify(draft.promptFragments) });
-  if (moderation.results.some((result) => result.flagged)) throw new Error("Choose a different original show description, or use a preset theme.");
+  if (moderation.results.some((result) => result.flagged)) throw new UserFacingError("Choose a different original show description, or use a preset theme.");
   const theme = showThemeSchema.parse({
     ...draft,
     id: `custom-${Date.now()}`,
@@ -39,8 +40,8 @@ async function resolveTheme(client: OpenAI, input: unknown): Promise<{ theme: Sh
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const text = typeof body?.text === "string" ? body.text.trim() : "";
-  if (text.length < 80) return NextResponse.json({ error: "Please provide at least 80 characters of study material." }, { status: 400 });
-  if (text.length > MAX_CHARS) return NextResponse.json({ error: `Keep live input under ${MAX_CHARS.toLocaleString()} characters for this Build Week prototype.` }, { status: 413 });
+  if (text.length < MIN_STUDY_CHARS) return NextResponse.json({ error: "Please provide at least 80 characters of study material." }, { status: 400 });
+  if (text.length > MAX_STUDY_CHARS) return NextResponse.json({ error: `Keep live input under ${MAX_STUDY_CHARS.toLocaleString()} characters for this Build Week prototype.` }, { status: 413 });
   if (!process.env.OPENAI_API_KEY) return NextResponse.json({ error: "Live generation is not configured on this deployment." }, { status: 503 });
 
   try {
@@ -67,10 +68,22 @@ Begin with a scene whose id is "recap" and type is "recap". Its one recap prompt
     });
     if (!response.output_parsed) throw new Error("Live generation returned no structured episode.");
     const rawEpisode = validateLiveEpisode(response.output_parsed, text);
-    const episode = episodeSchema.parse({ ...rawEpisode, theme, cast: rawEpisode.cast.map((member, index) => index === 0 ? { ...member, persona: theme.hostPersona } : member) });
+    const episode = episodeSchema.parse({
+      ...rawEpisode,
+      // The player must be able to identify a server-generated episode without
+      // relying on a model-authored identifier. This also keeps saved live
+      // shows separate from the bundled demo catalogue.
+      courseId: "live-notes",
+      // Live models may provide a descriptive visual label, but never a file
+      // that exists in this deployment. Scene art is streamed separately.
+      scenes: rawEpisode.scenes.map((scene) => ({ ...scene, visualAsset: scene.visualAsset?.startsWith("/assets/") ? scene.visualAsset : undefined })),
+      theme,
+      cast: rawEpisode.cast.map((member, index) => index === 0 ? { ...member, persona: theme.hostPersona } : member),
+    });
     return NextResponse.json({ episode, theme, themeNotice: notice, generatedWith: "GPT-5.6" });
   } catch (error) {
     console.error("episode-generation-failed", error instanceof Error ? error.message : "unknown-error");
+    if (error instanceof UserFacingError) return NextResponse.json({ error: error.message }, { status: 422 });
     return NextResponse.json({ error: "The live episode could not be generated right now." }, { status: 502 });
   }
 }
