@@ -51,7 +51,13 @@ export async function POST(request: Request) {
       input: [
         {
           role: "system",
-          content: `You are ReRun's classroom-safe showrunner. Turn only the supplied educational study material into one EpisodeSpec v1 JSON object. Follow the schema exactly. Use CH 03 and toon only. Begin with a scene whose id is "recap" and type is "recap". Its one recap prompt must ask the learner to retrieve a specific key term or short phrase from the supplied material, and its answers must include that exact source term or phrase; never use generic answers such as "study", "notes", or "material". Include narrative, at least two MCQ beats plus plausible misconception branches, a commercial review, and a cliffhanger. Questions must be answerable from supplied material; incorrect branches must be supportive and factually corrective. No real people, copyrighted characters, unsafe content, markdown, or claims beyond the source. Theme direction: ${theme.promptFragments.episodeStyleLine} Host persona: ${theme.hostPersona}.`,
+          content: `You are ReRun's classroom-safe showrunner. Turn only the supplied educational study material into one EpisodeSpec v1 JSON object. Follow the schema exactly. Use CH 03 and toon only.
+
+Produce exactly 21 scenes in a clear three-act order: one opening recap, narrative teaching in each act, one commercial review of this episode's own concepts, and one terminal cliffhanger. Teach exactly three learning objectives drawn from the source. Include at least three primary MCQ beats, a mid-episode retrieval question that revisits an Act 1 concept, and a final cumulative MCQ that integrates all three objectives. Questions must be answerable from supplied material.
+
+Every MCQ beat must include a genuinely easier, differently worded simplerQuestion; an integer difficulty from 1 through 5; and reviewsConcepts containing only this episode's learning-objective concept keys. Every incorrect route must go to a branch_outcome with a supportive, factual refutation, then route back to that same beat for its simplified retry. Options must have unique ids and distinct answer text, with exactly one correct answer. Every route must resolve to a scene id and the recap must be able to reach the terminal cliffhanger.
+
+Begin with a scene whose id is "recap" and type is "recap". Its one recap prompt must ask the learner to retrieve a specific key term or short phrase from the supplied material, and its answers must include that exact source term or phrase; never use generic answers such as "study", "notes", or "material". No real people, copyrighted characters, unsafe content, markdown, or claims beyond the source. Theme direction: ${theme.promptFragments.episodeStyleLine} Host persona: ${theme.hostPersona}.`,
         },
         { role: "user", content: text },
       ],

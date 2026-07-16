@@ -1,76 +1,94 @@
 # EpisodeSpec v1
 
-This is the frozen contract between the content pipeline and the player. Implement it as TypeScript types plus matching Zod schemas. Unknown fields are rejected; scene IDs must be unique; all references must resolve; P0 accepts MCQ beats only.
+`EpisodeSpec` is the frozen contract between the authoring pipeline and the player. Version remains `1`: Round 5 adds only optional, backward-compatible beat metadata. Runtime TypeScript and the matching Zod schemas reject unknown fields, require unique scene IDs, and require every route to resolve.
 
 ## Core types
 
 ```ts
 type SceneType = "recap" | "narrative" | "beat" | "branch_outcome" | "commercial" | "cliffhanger";
 type McqOption = { id: string; text: string; isCorrect: boolean; misconceptionKey?: string };
-type Beat = { kind: "mcq"; question: string; options: McqOption[]; onCorrect: string; onIncorrect: string };
+type Beat = {
+  kind: "mcq";
+  question: string;
+  // Additive Round 5 fields. Old valid episodes may omit them.
+  simplerQuestion?: string;
+  difficulty?: 1 | 2 | 3 | 4 | 5;
+  reviewsConcepts?: string[];
+  options: McqOption[];
+  onCorrect: string;
+  onIncorrect: string;
+};
 type Scene = {
-  id: string; type: SceneType; background: string; visualAsset?: string; speaker?: string; line?: string;
-  deepDive?: string; simpler?: string; simplerAgain?: string; next?: string;
+  id: string; type: SceneType; background: string; visualAsset?: string;
+  speaker?: string; line?: string; deepDive?: string;
+  simpler?: string; simplerAgain?: string; next?: string | null;
   recap?: { prompt: string; answers: string[]; conceptKey: string }[];
   beat?: Beat; refutation?: string;
 };
 type EpisodeSpec = {
   version: 1; episodeId: string; courseId: string; title: string; channel: 3;
-  format: "toon"; difficulty: 1 | 2 | 3 | 4 | 5;
-  theme?: ShowTheme; // normalized original style, palette, host persona, TTS voice/direction, and safety metadata
+  format: "toon"; difficulty: 1 | 2 | 3 | 4 | 5; theme?: ShowTheme;
   learningObjectives: { id: string; conceptKey: string; text: string }[];
   cast: { id: string; name: string; persona: string; voice?: string; spriteRef?: string }[];
   scenes: Scene[]; cliffhanger: { teaser: string; airsAfterHours: number };
 };
-type ConceptGraph = {
-  courseTitle: string;
-  objectives: { id: string; conceptKey: string; text: string }[];
-  concepts: { key: string; facts: string[]; prerequisites: string[]; misconceptions: string[] }[];
-};
 ```
+
+The Structured Outputs transport schema uses the same shape, with optional runtime fields represented as required nullable properties. The server removes nulls before runtime validation. This keeps OpenAI Structured Outputs compatible without changing the v1 player contract.
+
+## Round 5 demo-library contract
+
+The no-key library ships five independent 21-scene, three-act episodes. These are content contracts, not merely theme skins.
+
+| Show ID | Topic | Episode difficulty |
+| --- | --- | --- |
+| `photon-frontier` | circuits and Ohm's law | 3 |
+| `cellular-casefile` | organelles | 3 |
+| `power-up-plant-lab` | Newton's laws and forces | 2 |
+| `tiny-lightkeepers` | water cycle | 1 |
+| `chloroplast-quest` | light reactions and Calvin-cycle setup | 4 |
+
+Each episode has a topic-specific recap, three taught concepts, an Act 2 retrieval beat that reviews Act 1 concept keys, and a cumulative Act 3 finale whose `reviewsConcepts` includes the concepts taught across the episode. Every graded beat supplies a `simplerQuestion`, a beat-level difficulty, and review concept keys. Its incorrect route goes to a supportive `branch_outcome` with a factual `refutation`.
 
 ## Validation rules
 
 - `version` is exactly `1`; `channel` is exactly `3`; P0 `format` is exactly `toon`.
-- An episode has one recap, at least one narrative scene, at least three beats, one branch outcome, one commercial, and one cliffhanger.
-- MCQs have 2-4 unique options and exactly one correct option. Each non-correct option has a misconception key where one is known.
-- `onCorrect`, `onIncorrect`, and `next` point to existing scene IDs. The main path must reach the commercial and cliffhanger without cycles; a re-ask may loop only to its own variant beat.
-- `visualAsset`, when supplied, is a project-local public path to original/licensed/generated scene art. It is optional so a deterministic renderer can select a relevant local fallback for live scenes.
-- `theme`, when supplied, is normalized server-side from an original preset or adjective-only custom vibe. It includes a supported built-in TTS `voice` and a server-compiled, original-show `voiceInstruction`; client code never uses a raw vibe string as an image prompt or voice instruction.
-- Branch outcomes include a factual `refutation` and lead to a variant question; no insult, ridicule, or punishment language is permitted.
-- The generator must return only source-grounded educational content. Client copy should call a schema failure “Technical Difficulties,” not expose raw model output.
+- The Round 5 bundled fixtures each contain exactly 21 scenes arranged as recap/Act 1, retrieval/Act 2, and cumulative finale/Act 3, ending at one reachable cliffhanger.
+- MCQs have 2–4 unique option IDs/text values and exactly one correct option. Known distractors carry a `misconceptionKey`.
+- Every `next`, `onCorrect`, and `onIncorrect` value resolves to a scene. The main route must reach the finale and cliffhanger without a dead end; only intentionally bounded retry routes may revisit a beat.
+- Every graded beat has a genuine `simplerQuestion`: it changes the task wording or context, not just its narration caption. Its corrective outcome gives an accurate, supportive refutation.
+- `reviewsConcepts` names concept keys taught in this episode. The Act 2 review includes an Act 1 key; the Act 3 finale integrates the episode's concepts.
+- The player permits at most two incorrect attempts for a beat. On the second miss it shows the correct choice and explanation, then waits for an explicit **Continue with answer** action.
+- `visualAsset`, when supplied, is a project-local path to original, licensed, or ReRun-generated art. It is optional for live scenes because the renderer has deterministic fallback art.
+- `theme` is normalized server-side from an original preset or adjective-only custom vibe. It selects a supported built-in TTS voice and original delivery instruction; raw user vibe text never becomes an image or voice prompt.
+- Generated content is source-grounded and classroom-safe. Client copy calls schema failure “Technical Difficulties” and never exposes raw model output.
 
-## Complete bundled fixture: Photosynthesis - The Light Reactions Heist
+## Live-generation guardrails
+
+Live generation follows the same learning contract as the bundled library. A live episode must author a three-act route with at least three primary graded beats, a mid-episode retrieval that reviews its own Act 1 concepts, and a finale that retrieves across its own taught concepts. Every graded beat must include a real `simplerQuestion`, supportive corrective outcome/refutation, and valid destinations. Outcomes are manually acknowledged—never auto-advanced—and the player applies the two-miss answer-reveal cap. The server validates the generated structure and routes before a player receives it; schema failure uses the controlled fallback rather than partial content.
+
+## Authoring example
 
 ```json
 {
-  "version": 1,
-  "episodeId": "bio101-light-reactions-001",
-  "courseId": "bio101-photosynthesis",
-  "title": "The Light Reactions Heist",
-  "channel": 3,
-  "format": "toon",
-  "difficulty": 3,
-  "learningObjectives": [
-    { "id": "lo-light-products", "conceptKey": "photo.light-products", "text": "Identify the products of the light reactions." },
-    { "id": "lo-atp", "conceptKey": "cell.atp", "text": "Distinguish ATP from DNA and glucose." }
-  ],
-  "cast": [
-    { "id": "prof-paws", "name": "Professor Paws", "persona": "warm dramatic science host", "voice": "optional", "spriteRef": "demo/prof-paws" }
-  ],
-  "scenes": [
-    { "id": "recap", "type": "recap", "background": "broadcast-blue test card", "recap": [{ "prompt": "The powerhouse of the cell is the ____.", "answers": ["mitochondria"], "conceptKey": "cell.organelles" }], "next": "s1" },
-    { "id": "s1", "type": "narrative", "background": "cartoon chloroplast exterior, neon-green heist lighting", "speaker": "Professor Paws", "line": "Tonight, we crack the cell's sunlight vault. The first job happens in the light reactions.", "deepDive": "Chloroplast thylakoid membranes hold the light-catching machinery.", "next": "s2" },
-    { "id": "s2", "type": "beat", "background": "vault door marked energy currency", "speaker": "Professor Paws", "line": "Which molecule is ready-to-spend cellular energy?", "beat": { "kind": "mcq", "question": "Which molecule carries usable energy for cell work?", "options": [{ "id": "atp", "text": "ATP", "isCorrect": true }, { "id": "dna", "text": "DNA", "isCorrect": false, "misconceptionKey": "information-vs-energy" }, { "id": "glucose", "text": "Glucose", "isCorrect": false, "misconceptionKey": "stored-fuel-vs-carrier" }], "onCorrect": "s3", "onIncorrect": "s2-outcome" } },
-    { "id": "s2-outcome", "type": "branch_outcome", "background": "vault alarm and safe paper blueprints", "speaker": "Professor Paws", "line": "Wrong wire. The blueprints are not the battery.", "refutation": "DNA stores genetic information, glucose stores fuel, and ATP is the cell's immediately usable energy carrier.", "next": "s2-variant" },
-    { "id": "s2-variant", "type": "beat", "background": "rewired vault, one amber cable", "speaker": "Professor Paws", "line": "Rewind: what does a cell spend directly?", "beat": { "kind": "mcq", "question": "The cell's ready-to-spend energy currency is...", "options": [{ "id": "atp", "text": "ATP", "isCorrect": true }, { "id": "dna", "text": "DNA", "isCorrect": false, "misconceptionKey": "information-vs-energy" }], "onCorrect": "s3", "onIncorrect": "s2-variant" } },
-    { "id": "s3", "type": "narrative", "background": "glowing ATP vault opens", "speaker": "Professor Paws", "line": "ATP is in the getaway bag. Light reactions also make an electron carrier.", "simpler": "Light helps the cell fill two energy containers: ATP and NADPH.", "simplerAgain": "Two energy helpers leave the light reactions: ATP and NADPH.", "next": "s4" },
-    { "id": "s4", "type": "beat", "background": "two glowing getaway canisters", "speaker": "Professor Paws", "line": "What is the other energy carrier?", "beat": { "kind": "mcq", "question": "Besides ATP, light reactions produce which electron carrier?", "options": [{ "id": "nadph", "text": "NADPH", "isCorrect": true }, { "id": "oxygen", "text": "Oxygen", "isCorrect": false, "misconceptionKey": "byproduct-vs-carrier" }, { "id": "co2", "text": "Carbon dioxide", "isCorrect": false, "misconceptionKey": "reactant-vs-product" }], "onCorrect": "commercial", "onIncorrect": "s4-outcome" } },
-    { "id": "s4-outcome", "type": "branch_outcome", "background": "oxygen bubbles drift from a broken canister", "speaker": "Professor Paws", "line": "Oxygen exits as a by-product; it is not the carrier we bank.", "refutation": "Splitting water releases oxygen. NADPH carries energized electrons onward, while carbon dioxide is used later in the Calvin cycle.", "next": "s4-variant" },
-    { "id": "s4-variant", "type": "beat", "background": "canister label highlighted", "speaker": "Professor Paws", "line": "One more take: which carrier transports energized electrons?", "beat": { "kind": "mcq", "question": "The light reactions produce ATP and...", "options": [{ "id": "nadph", "text": "NADPH", "isCorrect": true }, { "id": "oxygen", "text": "Oxygen", "isCorrect": false, "misconceptionKey": "byproduct-vs-carrier" }], "onCorrect": "commercial", "onIncorrect": "s4-variant" } },
-    { "id": "commercial", "type": "commercial", "background": "retro power-company ad", "speaker": "Professor Paws", "line": "Commercial break. Answer a review question to skip.", "beat": { "kind": "mcq", "question": "Which organelle makes most ATP in cellular respiration?", "options": [{ "id": "mitochondria", "text": "Mitochondria", "isCorrect": true }, { "id": "nucleus", "text": "Nucleus", "isCorrect": false, "misconceptionKey": "organelle-function" }], "onCorrect": "cliffhanger", "onIncorrect": "commercial" } },
-    { "id": "cliffhanger", "type": "cliffhanger", "background": "storm over the Calvin Cycle district", "speaker": "Professor Paws", "line": "We got ATP and NADPH, but the Calvin Cycle is waiting.", "next": null }
-  ],
-  "cliffhanger": { "teaser": "Next: the Calvin Cycle Caper.", "airsAfterHours": 24 }
+  "id": "act2-retrieval",
+  "type": "beat",
+  "background": "circuit repair bench",
+  "line": "Signal check: use the relationship we learned in Act 1.",
+  "beat": {
+    "kind": "mcq",
+    "question": "A 12 V source pushes 3 A through a resistor. What is the resistance?",
+    "simplerQuestion": "Use V = I × R. If 12 volts and 3 amps are known, how many ohms is R?",
+    "difficulty": 3,
+    "reviewsConcepts": ["circuits.voltage-current", "circuits.ohms-law"],
+    "options": [
+      { "id": "four-ohms", "text": "4 Ω", "isCorrect": true },
+      { "id": "thirty-six-ohms", "text": "36 Ω", "isCorrect": false, "misconceptionKey": "multiply-instead-of-divide" }
+    ],
+    "onCorrect": "act2-next",
+    "onIncorrect": "act2-retrieval-outcome"
+  }
 }
 ```
+
+The matching outcome gives the calculation correction and routes back to the same beat. The runtime tracks attempts; the authored graph does not need a separate infinite variant-beat loop.

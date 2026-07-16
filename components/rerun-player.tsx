@@ -9,6 +9,17 @@ import { bundledDemoAudioFile } from "@/lib/demo-audio-manifest";
 type Screen = "off" | "boot" | "static" | "ingest" | "shows" | "standby" | "recap" | "episode" | "guide";
 type Narration = "idle" | "loading" | "playing" | "fallback" | "complete";
 type NarrationTransport = "audio" | "speech" | "timer" | null;
+type PlayerBeat = NonNullable<Scene["beat"]> & {
+  /** Optional v1 additions. Kept optional so older live episodes still play. */
+  simplerQuestion?: string;
+  explanation?: string;
+};
+
+type WrongAttempt = {
+  count: number;
+  correctAnswer: string;
+  explanation: string;
+};
 
 type AudioBus = {
   context: AudioContext;
@@ -116,7 +127,11 @@ export function ReRunPlayer() {
   const [captions, setCaptions] = useState(true);
   const [muted, setMuted] = useState(false);
   const [paused, setPaused] = useState(false);
+  const [autoplay, setAutoplay] = useState(true);
+  const [autoplayDwell, setAutoplayDwell] = useState(false);
   const [answeringOption, setAnsweringOption] = useState<string | null>(null);
+  const [wrongAttempt, setWrongAttempt] = useState<WrongAttempt | null>(null);
+  const [answerRevealed, setAnswerRevealed] = useState(false);
   const [notice, setNotice] = useState("");
   const [liveLoading, setLiveLoading] = useState(false);
   const [themeInput, setThemeInput] = useState<ThemeInput>({ kind: "preset", id: defaultTheme.id });
@@ -139,12 +154,17 @@ export function ReRunPlayer() {
   const audioBus = useRef<AudioBus | null>(null);
   const previousSceneId = useRef<string | null>(null);
   const sceneCutTimer = useRef<number | null>(null);
+  const autoplayTimer = useRef<number | null>(null);
+  const autoplayDeadline = useRef(0);
+  const autoplayRemaining = useRef(1_600);
 
   const scene = useMemo(() => findScene(episode, sceneId), [episode, sceneId]);
   const activeDemoShow = useMemo(() => demoShows.find((show) => show.episode.episodeId === episode.episodeId), [episode.episodeId]);
   const bundledSceneArt = activeDemoShow ? (scene.type === "narrative" || scene.type === "cliffhanger" ? activeDemoShow.art.teaching : activeDemoShow.art.challenge) : undefined;
   const accuracy = ratings.length ? Math.round((ratings.filter(Boolean).length / ratings.length) * 100) : null;
   const visibleLine = rewindLevel >= 2 && scene.simplerAgain ? scene.simplerAgain : rewindLevel >= 1 && scene.simpler ? scene.simpler : scene.line;
+  const displayedBeat = scene.beat as PlayerBeat | undefined;
+  const displayedQuestion = rewindLevel > 0 && displayedBeat?.simplerQuestion ? displayedBeat.simplerQuestion : displayedBeat?.question;
   const activeTheme = episode.theme ?? defaultTheme;
 
   useEffect(() => {
@@ -218,16 +238,7 @@ export function ReRunPlayer() {
       setNarration("complete");
       if (scene.beat) {
         setBeatRevealed(true);
-        return;
       }
-      if (!scene.next || scene.type === "cliffhanger") return;
-      narrationTimer.current = window.setTimeout(() => {
-        if (!cancelled) {
-          setSceneId(scene.next!);
-          setRewindLevel(0);
-          setPaused(false);
-        }
-      }, 850);
     };
 
     const scheduleFallback = (delay: number) => {
@@ -267,11 +278,19 @@ export function ReRunPlayer() {
         const cacheKey = `${activeTheme.id}:${visibleLine}`;
         let source = audioCache.current.get(cacheKey);
         if (!source) {
-          const bundledFilename = episode.courseId.startsWith("demo-") ? bundledDemoAudioFile(activeTheme.voice, visibleLine) : undefined;
+          const isBundledDemo = episode.courseId.startsWith("demo-");
+          const bundledFilename = isBundledDemo ? bundledDemoAudioFile(activeTheme.voice, visibleLine) : undefined;
           if (bundledFilename) {
             const bundledSource = `/assets/audio/${bundledFilename}`;
             const bundledResponse = await fetch(bundledSource, { method: "HEAD" });
             if (bundledResponse.ok) source = bundledSource;
+          }
+          // A demo must be fully local: use its checked-in MP3 when present,
+          // otherwise move straight to the browser/silent fallback instead of
+          // making a doomed API request in a no-key profile.
+          if (!source && isBundledDemo) {
+            useBrowserSpeech();
+            return;
           }
           if (!source) {
             const response = await fetch("/api/tts", {
@@ -339,6 +358,55 @@ export function ReRunPlayer() {
     }
   }, [audioElement, muted, narration, paused]);
 
+  // Autoplay is deliberately narrow: it only moves ordinary narrative tape
+  // forward, and only after the learner can see an "Up next" dwell. Outcomes,
+  // commercials, questions, and cliffhangers always require a learner action.
+  useEffect(() => {
+    const canAutoplay = screen === "episode"
+      && autoplay
+      && !paused
+      && narration === "complete"
+      && scene.type === "narrative"
+      && Boolean(scene.next);
+
+    if (!canAutoplay) {
+      if (autoplayTimer.current !== null) window.clearTimeout(autoplayTimer.current);
+      autoplayTimer.current = null;
+      if (screen !== "episode" || !autoplay || scene.type !== "narrative" || narration !== "complete") {
+        autoplayRemaining.current = 1_600;
+        setAutoplayDwell(false);
+      } else if (paused) {
+        setAutoplayDwell(true);
+      }
+      return;
+    }
+
+    const delay = Math.max(0, autoplayRemaining.current);
+    setAutoplayDwell(true);
+    autoplayDeadline.current = Date.now() + delay;
+    autoplayTimer.current = window.setTimeout(() => {
+      autoplayTimer.current = null;
+      autoplayRemaining.current = 1_600;
+      setAutoplayDwell(false);
+      if (scene.next) {
+        setSceneId(scene.next);
+        setRewindLevel(0);
+        setBeatRevealed(false);
+        setHostReaction(null);
+      }
+    }, delay);
+
+    return () => {
+      if (autoplayTimer.current !== null) {
+        window.clearTimeout(autoplayTimer.current);
+        autoplayTimer.current = null;
+        // React runs this cleanup before the paused effect re-runs, so this
+        // captures the exact remainder instead of restarting the 1.6s dwell.
+        autoplayRemaining.current = Math.max(0, autoplayDeadline.current - Date.now());
+      }
+    };
+  }, [autoplay, narration, paused, scene.id, scene.next, scene.type, screen]);
+
   useEffect(() => {
     if (!hostReaction || scene.type === "branch_outcome") return;
     const timer = window.setTimeout(() => setHostReaction(null), 900);
@@ -388,6 +456,8 @@ export function ReRunPlayer() {
     setRatings([]);
     setRewindLevel(0);
     setAnsweringOption(null);
+    setWrongAttempt(null);
+    setAnswerRevealed(false);
     setHostReaction(null);
     setVisuals({});
     setThemeNotice("");
@@ -416,6 +486,8 @@ export function ReRunPlayer() {
       setRatings([]);
       setRewindLevel(0);
       setAnsweringOption(null);
+      setWrongAttempt(null);
+      setAnswerRevealed(false);
       setHostReaction(null);
       setScreen("recap");
       setNotice("Your notes are now on air.");
@@ -442,6 +514,8 @@ export function ReRunPlayer() {
     setNotice("");
     setAnsweringOption(null);
     setBeatRevealed(false);
+    setWrongAttempt(null);
+    setAnswerRevealed(false);
     setHostReaction(null);
   }
 
@@ -452,6 +526,7 @@ export function ReRunPlayer() {
       setPaused(false);
       setBeatRevealed(false);
       setHostReaction(null);
+      setAnswerRevealed(false);
     }
   }
 
@@ -477,12 +552,34 @@ export function ReRunPlayer() {
 
   function choose(optionId: string) {
     const option = scene.beat?.options.find((candidate) => candidate.id === optionId);
-    if (!option || !scene.beat || answeringOption) return;
+    if (!option || !scene.beat || answeringOption || answerRevealed) return;
     setAnsweringOption(optionId);
     setRatings((current) => [...current.slice(-9), option.isCorrect]);
     // The next scene carries the learner-facing feedback. A transient status bar
     // here is redundant and can cover the transport at smaller TV viewports.
     setNotice("");
+    if (!option.isCorrect) {
+      const incorrectCount = (wrongAttempt?.count ?? 0) + 1;
+      if (incorrectCount >= 2) {
+        const correctOption = scene.beat.options.find((candidate) => candidate.isCorrect)!;
+        const correctiveScene = findScene(episode, scene.beat.onIncorrect);
+        setWrongAttempt({
+          count: incorrectCount,
+          correctAnswer: correctOption.text,
+          explanation: displayedBeat?.explanation ?? correctiveScene.refutation ?? `“${correctOption.text}” is the correct answer.`,
+        });
+        setAnswerRevealed(true);
+        return;
+      }
+      setWrongAttempt((current) => ({
+        count: (current?.count ?? 0) + 1,
+        correctAnswer: scene.beat!.options.find((candidate) => candidate.isCorrect)!.text,
+        explanation: displayedBeat?.explanation ?? findScene(episode, scene.beat!.onIncorrect).refutation ?? "Review the corrective feedback, then try the simpler take.",
+      }));
+    } else {
+      setWrongAttempt(null);
+    }
+
     window.setTimeout(() => {
       setSceneId(option.isCorrect ? scene.beat!.onCorrect : scene.beat!.onIncorrect);
       setHostReaction(option.isCorrect ? "celebrate" : "retry");
@@ -493,8 +590,19 @@ export function ReRunPlayer() {
     }, option.isCorrect ? 420 : 520);
   }
 
+  function continueWithAnswer() {
+    if (!scene.beat || !answerRevealed) return;
+    setSceneId(scene.beat.onCorrect);
+    setRewindLevel(0);
+    setBeatRevealed(false);
+    setAnsweringOption(null);
+    setAnswerRevealed(false);
+    setWrongAttempt(null);
+    setHostReaction(null);
+  }
+
   function rewind() {
-    if (!scene.simpler) {
+    if (!scene.simpler && !displayedBeat?.simplerQuestion) {
       setNotice("This scene has no simpler take. Try the next question instead.");
       return;
     }
@@ -520,23 +628,24 @@ export function ReRunPlayer() {
             {screen === "shows" && <DemoShowCatalog onBack={() => setScreen("ingest")} onSelect={loadDemo} />}
             {screen === "standby" && <div className="screen-center standby-screen"><p>PLEASE STAND BY</p><span>TONIGHT&apos;S EPISODE IS IN PRODUCTION</span></div>}
             {screen === "recap" && <div className="recap-screen"><ScreenHeader right="PREVIOUSLY ON..." /><div className="recap-body"><p className="eyebrow">WARM-UP BEFORE WE ROLL TAPE</p><h2>{episode.title}</h2><label>{scene.recap?.[0]?.prompt}<input value={recap} onChange={(event) => setRecap(event.target.value)} placeholder="your answer" /></label>{recapFeedback && <p className="feedback">{recapFeedback}</p>}<div className="ingest-actions"><button className="secondary" onClick={checkRecap}>Check</button><button className="primary" onClick={startEpisode}>Now airing - CH 03</button></div></div></div>}
-            {screen === "episode" && <div className={`episode-screen ${paused ? "is-paused" : ""} ${isBeat && beatRevealed && !paused ? "has-question" : ""} ${answeringOption ? "is-answering" : ""}`}><ScreenHeader right={isCommercial ? "COMMERCIAL BREAK" : "THE TOON BLOCK"} /><div className={`scene-art scene-${scene.type}`}><SceneIllustration scene={scene} narrating={narration === "playing" || narration === "fallback"} reaction={hostReaction} questionReady={isBeat && beatRevealed && !paused} visualOverride={visuals[scene.id] ?? bundledSceneArt} /></div><div className={`scene-cut ${sceneCut ? "is-active" : ""}`} aria-hidden="true" /><div className={`scene-copy ${isOutcome ? "has-refutation" : ""}`}><p className="speaker">{scene.speaker}</p>{captions && <p className="caption">{visibleLine}</p>}{isOutcome && <p className="refutation">↺ {scene.refutation}</p>}</div>{paused && <aside className="deep-dive"><p>PAUSED - DEEP DIVE</p><strong>{scene.deepDive ?? "Stay with the current scene, then answer the next beat."}</strong><button onClick={() => setPaused(false)}>Resume show</button></aside>}{isBeat && beatRevealed && !paused && <><div className="question-wash" aria-hidden="true" /><section className={`beat-card ${isCommercial ? "commercial" : ""}`} role="dialog" aria-modal="true" aria-labelledby={`question-${scene.id}`}><p>{isCommercial ? "SKIP THIS AD - answer a review question" : "SIGNAL LOCKED — THE SHOW NEEDS YOU"}</p><h2 id={`question-${scene.id}`}>{scene.beat!.question}</h2><div className="options">{scene.beat!.options.map((option, index) => {
+            {screen === "episode" && <div className={`episode-screen ${paused ? "is-paused" : ""} ${isBeat && beatRevealed && !paused ? "has-question" : ""} ${answeringOption ? "is-answering" : ""}`}><ScreenHeader right={isCommercial ? "COMMERCIAL BREAK" : "THE TOON BLOCK"} /><div className={`scene-art scene-${scene.type}`}><SceneIllustration scene={scene} narrating={narration === "playing" || narration === "fallback"} reaction={hostReaction} questionReady={isBeat && beatRevealed && !paused} visualOverride={visuals[scene.id] ?? bundledSceneArt} /></div><div className={`scene-cut ${sceneCut ? "is-active" : ""}`} aria-hidden="true" /><div className={`scene-copy ${isOutcome ? "has-refutation" : ""}`}><p className="speaker">{scene.speaker}</p>{captions && <p className="caption">{visibleLine}</p>}{isOutcome && <p className="refutation">↺ {scene.refutation}</p>}</div>{paused && <aside className="deep-dive"><p>PAUSED - DEEP DIVE</p><strong>{scene.deepDive ?? "Stay with the current scene, then answer the next beat."}</strong><button onClick={() => setPaused(false)}>Resume show</button></aside>}{isBeat && beatRevealed && !paused && <><div className="question-wash" aria-hidden="true" /><section className={`beat-card ${isCommercial ? "commercial" : ""}`} role="dialog" aria-modal="true" aria-labelledby={`question-${scene.id}`}><p>{answerRevealed ? "ANSWER REVEALED — TAKE THE CORRECT ROUTE" : isCommercial ? "SKIP THIS AD - answer a review question" : "SIGNAL LOCKED — THE SHOW NEEDS YOU"}</p><h2 id={`question-${scene.id}`}>{displayedQuestion}</h2><div className="options">{scene.beat!.options.map((option, index) => {
               const isSelected = answeringOption === option.id;
-              return <button key={option.id} autoFocus={index === 0} className={isSelected ? `is-selected ${option.isCorrect ? "is-correct" : "is-wrong"}` : ""} disabled={Boolean(answeringOption)} onClick={() => choose(option.id)}><span>{String.fromCharCode(65 + index)}</span><b>{option.text}</b>{isSelected && <em>ANSWER LOCKED</em>}</button>;
-            })}</div></section></>}{!isBeat && !isCliffhanger && !paused && <button onClick={advance} className="continue">{narration === "loading" || narration === "playing" || narration === "fallback" ? "Skip line" : isOutcome ? "Rewind & retry" : "Continue"} ▶</button>}{isCliffhanger && <section className="cliffhanger"><p>TO BE CONTINUED</p><h2>{episode.cliffhanger.teaser}</h2><span>Next episode airs in {episode.cliffhanger.airsAfterHours} hours</span><button onClick={() => setScreen("guide")}>See TV guide</button></section>}<p className="ai-voice-note">Narration available without an API key · captions carry all essential feedback</p></div>}
+              const showCorrect = answerRevealed && option.isCorrect;
+              return <button key={option.id} autoFocus={index === 0} className={isSelected || showCorrect ? `is-selected ${option.isCorrect ? "is-correct" : "is-wrong"}` : ""} disabled={Boolean(answeringOption) || answerRevealed} onClick={() => choose(option.id)}><span>{String.fromCharCode(65 + index)}</span><b>{option.text}</b>{isSelected && !answerRevealed && <em>ANSWER LOCKED</em>}{showCorrect && <em>CORRECT ANSWER</em>}</button>;
+            })}</div>{answerRevealed && <div className="answer-reveal" role="status"><strong>{wrongAttempt?.correctAnswer} is correct.</strong><span>{wrongAttempt?.explanation}</span><button className="continue-with-answer" onClick={continueWithAnswer}>Continue with answer ▶</button></div>}</section></>}{!isBeat && !isCliffhanger && !paused && <>{autoplayDwell && <p className="up-next" role="status">UP NEXT — advancing in a moment</p>}<button onClick={advance} className="continue" disabled={isOutcome && narration !== "complete"}>{isOutcome && narration !== "complete" ? "Feedback playing..." : isOutcome ? "Rewind & retry" : narration === "loading" || narration === "playing" || narration === "fallback" ? "Skip line" : "Continue"} ▶</button></>}{isCliffhanger && <section className="cliffhanger"><p>TO BE CONTINUED</p><h2>{episode.cliffhanger.teaser}</h2><span>Next episode airs in {episode.cliffhanger.airsAfterHours} hours</span><button onClick={() => setScreen("guide")}>See TV guide</button></section>}<p className="ai-voice-note">Narration available without an API key · captions carry all essential feedback</p></div>}
             {screen === "guide" && <div className="guide-screen"><ScreenHeader right="SPACED REVIEW LINEUP" /><div className="guide-body"><p className="eyebrow">TV GUIDE</p><h2>Next on ReRun</h2><div className="guide-row"><b>CH 03</b><span>{episode.title}</span><i>WATCHED</i></div><div className="guide-row"><b>CH 03</b><span>{episode.cliffhanger.teaser}</span><i>+{episode.cliffhanger.airsAfterHours}h</i></div><div className="guide-row locked"><b>CH 07</b><span>The Buzz-In</span><i>COMING SOON</i></div><button className="primary" onClick={() => loadDemo()}>Watch again</button></div></div>}
             {notice && <p className="notice" role="status">{notice}</p>}
           </div>
         </div>
       </section>
-      <aside className="remote" aria-label="Remote control"><div className="remote-brand"><b>ReRun</b><span>NETWORK</span></div><button className="power" onClick={power} aria-label={screen === "off" ? "Power on television" : "Power off television"}>⏻</button><div className="ratings"><span>RATINGS</span><strong>{accuracy === null ? "---" : `${accuracy}%`}</strong><div>{[1,2,3,4,5].map((pip) => <i key={pip} className={pip <= Math.ceil((accuracy ?? 0) / 20) ? "on" : ""} />)}</div></div><div className="remote-grid"><button onClick={() => setPaused(true)}>Pause</button><button onClick={rewind}>◀◀ RWD</button><button onClick={() => setNotice("Fast-forward unlocks with P1 mastery checks.")}>FFWD</button><button onClick={() => setNotice("CH 07 and CH 11 are scheduled for P1.")}>CH ▲▼</button></div><button className="callin" onClick={() => setNotice("Call-in is a P1 Socratic feature. The host will never reveal an answer.")}>☎ Call-in</button><div className="remote-footer"><button onClick={() => setCaptions((value) => !value)}>CC {captions ? "ON" : "OFF"}</button><button onClick={() => setMuted((value) => !value)}>{muted ? "🔇" : "🔊"}</button></div></aside>
+      <aside className="remote" aria-label="Remote control"><div className="remote-brand"><b>ReRun</b><span>NETWORK</span></div><button className="power" onClick={power} aria-label={screen === "off" ? "Power on television" : "Power off television"}>⏻</button><div className="ratings"><span>RATINGS</span><strong>{accuracy === null ? "---" : `${accuracy}%`}</strong><div>{[1,2,3,4,5].map((pip) => <i key={pip} className={pip <= Math.ceil((accuracy ?? 0) / 20) ? "on" : ""} />)}</div></div><div className="remote-grid"><button onClick={() => setPaused(true)}>Pause</button><button onClick={rewind}>◀◀ RWD</button><button onClick={() => setAutoplay((value) => !value)} aria-pressed={autoplay}>AUTO {autoplay ? "ON" : "OFF"}</button><button onClick={() => setNotice("CH 07 and CH 11 are scheduled for P1.")}>CH ▲▼</button></div><button className="callin" onClick={() => setNotice("Call-in is a P1 Socratic feature. The host will never reveal an answer.")}>☎ Call-in</button><div className="remote-footer"><button onClick={() => setCaptions((value) => !value)}>CC {captions ? "ON" : "OFF"}</button><button onClick={() => setMuted((value) => !value)}>{muted ? "🔇" : "🔊"}</button></div></aside>
       <p className="build-note">Education demo • retrieval practice, feedback, adaptive re-explanation • no account required</p>
     </main>
   );
 }
 
 function DemoShowCatalog({ onBack, onSelect }: { onBack: () => void; onSelect: (show: DemoShow) => void }) {
-  return <div className="show-catalog-screen"><ScreenHeader right="DEMO LIBRARY" /><div className="show-catalog"><div><p className="eyebrow">FIVE PILOT BROADCASTS</p><h1>Choose a show.</h1><p className="quiet">Each version is a no-key, fully playable photosynthesis pilot with its own presentation style.</p></div><div className="show-cards">{demoShows.map((show) => <button key={show.id} type="button" className="show-card" style={{ "--show-primary": show.theme.palette[1], "--show-accent": show.theme.palette[3] ?? show.theme.palette[0] } as CSSProperties} onClick={() => onSelect(show)}><span className="show-card-swatch" aria-hidden="true" /><span><b>{show.title}</b><small>{show.theme.name}</small><em>{show.teaser}</em></span><i>WATCH ▶</i></button>)}</div><button type="button" className="secondary catalog-back" onClick={onBack}>← Back to studio</button></div></div>;
+  return <div className="show-catalog-screen"><ScreenHeader right="DEMO LIBRARY" /><div className="show-catalog"><div><p className="eyebrow">FIVE PILOT BROADCASTS</p><h1>Choose a show.</h1><p className="quiet">Five no-key pilots across biology, physics, and electronics — each teaches a different subject in its own animated style.</p></div><div className="show-cards">{demoShows.map((show) => <button key={show.id} type="button" className="show-card" style={{ "--show-primary": show.theme.palette[1], "--show-accent": show.theme.palette[3] ?? show.theme.palette[0] } as CSSProperties} onClick={() => onSelect(show)}><span className="show-card-swatch" aria-hidden="true" /><span><b>{show.title}</b><small>{show.theme.name}</small><em>{show.teaser}</em></span><i>WATCH ▶</i></button>)}</div><button type="button" className="secondary catalog-back" onClick={onBack}>← Back to studio</button></div></div>;
 }
 
 function ScreenHeader({ right }: { right: string }) {

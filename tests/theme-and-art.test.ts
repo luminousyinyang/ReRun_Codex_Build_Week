@@ -11,7 +11,7 @@ describe("theme and art contracts", () => {
 
   it("gives every demo scene with narration two rewind takes", () => {
     const narratedScenes = demoEpisode.scenes.filter((scene) => scene.line);
-    expect(narratedScenes).toHaveLength(10);
+    expect(narratedScenes.length).toBeGreaterThan(10);
     expect(narratedScenes.every((scene) => scene.simpler && scene.simplerAgain)).toBe(true);
   });
 
@@ -19,6 +19,24 @@ describe("theme and art contracts", () => {
     expect(demoShows).toHaveLength(5);
     expect(new Set(demoShows.map((show) => show.theme.id)).size).toBe(5);
     expect(demoShows.every((show) => episodeSchema.safeParse(show.episode).success)).toBe(true);
+    expect(demoShows.every((show) => show.episode.scenes.length === 21)).toBe(true);
+    expect(new Set(demoShows.map((show) => show.episode.learningObjectives.map((objective) => objective.conceptKey).join(","))).size).toBe(5);
+  });
+
+  it("gives every graded demo beat metadata and a correcting rewind branch", () => {
+    for (const show of demoShows) {
+      const beats = show.episode.scenes.filter((scene) => scene.beat);
+      expect(beats.length).toBeGreaterThanOrEqual(3);
+      for (const scene of beats) {
+        expect(scene.beat?.simplerQuestion).toBeTruthy();
+        expect(scene.beat?.difficulty).toBeTruthy();
+        expect(scene.beat?.reviewsConcepts?.length).toBeGreaterThan(0);
+        const outcome = show.episode.scenes.find((candidate) => candidate.id === scene.beat?.onIncorrect);
+        expect(outcome?.type).toBe("branch_outcome");
+        expect(outcome?.refutation).toBeTruthy();
+        expect(outcome?.next).toBe(scene.id);
+      }
+    }
   });
 
   it("requires a live recap answer grounded in the supplied notes", () => {
