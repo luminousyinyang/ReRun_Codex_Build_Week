@@ -302,6 +302,10 @@ export function validateLiveEpisodeStructure(episode: EpisodeSpec) {
     if (!outcome || outcome.type !== "branch_outcome" || !outcome.refutation || !outcome.next) {
       throw new Error(`Beat ${scene.id} needs a supportive corrective branch with a refutation and retry.`);
     }
+    const correctTarget = episode.scenes.find((candidate) => candidate.id === beat.onCorrect);
+    if (!correctTarget || correctTarget.type === "branch_outcome") {
+      throw new Error(`Beat ${scene.id} must route a correct answer forward, never to a retry branch.`);
+    }
     const retry = episode.scenes.find((candidate) => candidate.id === outcome.next);
     if (!retry?.beat || retry.id !== scene.id) {
       throw new Error(`Corrective branch for ${scene.id} must rewind to the same simplified beat.`);

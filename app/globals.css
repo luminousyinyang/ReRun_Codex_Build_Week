@@ -136,7 +136,15 @@ button { cursor:pointer; } button:focus-visible, textarea:focus-visible, input:f
 .home-saved { margin-top:18px;padding-top:14px;border-top:1px dashed rgba(51,255,102,.3); }
 .home-saved .eyebrow { margin:0 0 8px;color:var(--green); }
 .saved-episode-card { --show-primary:#1b4fd8;--show-accent:#33ff66; }
-.saved-episode-mark { display:grid;place-items:center;align-self:stretch;border-radius:8px;color:var(--green);background:rgba(51,255,102,.09);font:1.05rem VT323,monospace;letter-spacing:.08em; }
+.saved-episode-entry { display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:stretch; }
+.saved-episode-entry .saved-episode-card { min-width:0; }
+.saved-download { min-width:132px;padding:0 12px;border:1px solid rgba(51,255,102,.55);border-radius:10px;color:var(--green);background:rgba(51,255,102,.07);font:1.05rem VT323,monospace;letter-spacing:.04em; }
+.saved-download:hover,.saved-download:focus-visible { border-color:var(--amber);color:var(--amber);background:rgba(255,176,0,.08); }
+.saved-download:disabled { cursor:wait;opacity:.7; }
+.video-export-status { margin:8px 0 0;color:var(--green);font:1rem VT323,monospace;letter-spacing:.04em; }
+.saved-episode-thumbnail { position:relative;display:grid;place-items:center;align-self:stretch;aspect-ratio:16/9;overflow:hidden;border-radius:8px;color:var(--green);background:linear-gradient(135deg,#15224c,#071327);font:1.05rem/1 VT323,monospace;letter-spacing:.08em;text-align:center; }
+.saved-episode-thumbnail img { width:100%;height:100%;object-fit:cover;display:block; }
+.saved-episode-thumbnail i { position:absolute;inset:auto 0 0;padding:3px 5px;color:#edfff2;background:linear-gradient(transparent,rgba(0,0,0,.88));font:.72rem VT323,monospace;font-style:normal;letter-spacing:.07em;text-align:left; }
 .home-create { margin-top:22px;padding-top:16px;border-top:1px dashed rgba(255,176,0,.35);text-align:center; }
 .home-create .eyebrow { margin:0 0 8px; }
 .file-input { position:absolute;width:1px;height:1px;opacity:0;pointer-events:none; }
@@ -145,3 +153,4 @@ button { cursor:pointer; } button:focus-visible, textarea:focus-visible, input:f
 .notes-meta { display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:6px;color:rgba(255,255,255,.58);font:.72rem VT323,monospace;text-align:left; }
 .standby-screen strong { color:var(--green);font:1.4rem VT323,monospace;letter-spacing:.08em; }
 @media (max-width:800px) { .beat-card { max-height:88%;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin; }.has-question .ai-voice-note { display:none; }.home-create .home-generate { width:100%; } }
+@media (max-width:620px) { .saved-episode-entry { grid-template-columns:1fr; }.saved-download { min-height:38px; } }

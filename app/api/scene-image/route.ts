@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import OpenAI, { toFile } from "openai";
+import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import { buildSceneArtPrompt, makeSceneArtKey, sceneArtRequestSchema } from "@/lib/scene-art";
 
@@ -20,13 +20,6 @@ function remember(key: string, value: string) {
 
 function keyFor(request: Parameters<typeof makeSceneArtKey>[0]) {
   return createHash("sha256").update(makeSceneArtKey(request)).digest("hex");
-}
-
-async function referenceFile(dataUrl?: string) {
-  if (!dataUrl) return undefined;
-  const match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
-  if (!match) throw new Error("Invalid style reference");
-  return toFile(Buffer.from(match[2], "base64"), "style-reference.jpg", { type: `image/${match[1]}` });
 }
 
 export async function POST(request: Request) {
@@ -65,10 +58,7 @@ export async function POST(request: Request) {
         inFlight.set(key, finalPromise);
         const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
         const prompt = buildSceneArtPrompt(payload.scene, payload.theme);
-        const reference = await referenceFile(payload.referenceDataUrl);
-        const imageStream = reference
-          ? await client.images.edit({ model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-2", image: reference, prompt: `${prompt} Match the reference image's palette and linework.`, quality: "low", size: "1536x1024", output_format: "jpeg", output_compression: 78, stream: true, partial_images: 2 })
-          : await client.images.generate({ model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-2", prompt, quality: "low", size: "1536x1024", output_format: "jpeg", output_compression: 78, stream: true, partial_images: 2 });
+        const imageStream = await client.images.generate({ model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-2", prompt, quality: "low", size: "1536x1024", output_format: "jpeg", output_compression: 78, stream: true, partial_images: 2 });
 
         for await (const item of imageStream) {
           const dataUrl = `data:image/jpeg;base64,${item.b64_json}`;

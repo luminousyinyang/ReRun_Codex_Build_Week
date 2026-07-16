@@ -9,6 +9,26 @@ class UserFacingError extends Error {}
 
 const ipTerms = /\b(family guy|disney|pixar|marvel|star wars|pokemon|simpsons|south park|studio ghibli|dreamworks)\b/gi;
 
+/** Structured generation occasionally mislabels a correct destination as its
+ * adjacent retry branch. Repair that local graph mistake deterministically
+ * before the stricter live-episode validator checks the finished show. */
+function repairCorrectRoutes(value: unknown) {
+  if (!value || typeof value !== "object" || !Array.isArray((value as { scenes?: unknown }).scenes)) return value;
+  const draft = value as { scenes: Array<Record<string, unknown>> };
+  const scenes = draft.scenes;
+  const repairedScenes = scenes.map((scene, index) => {
+    const beat = scene.beat;
+    if (!beat || typeof beat !== "object") return scene;
+    const onCorrect = (beat as { onCorrect?: unknown }).onCorrect;
+    const target = typeof onCorrect === "string" ? scenes.find((candidate) => candidate.id === onCorrect) : undefined;
+    if (target?.type !== "branch_outcome") return scene;
+    const forward = scenes.slice(index + 1).find((candidate) => candidate.type !== "branch_outcome");
+    if (!forward || typeof forward.id !== "string") return scene;
+    return { ...scene, beat: { ...(beat as Record<string, unknown>), onCorrect: forward.id } };
+  });
+  return { ...draft, scenes: repairedScenes };
+}
+
 async function resolveTheme(client: OpenAI, input: unknown): Promise<{ theme: ShowTheme; notice?: string }> {
   const parsed = themeInputSchema.safeParse(input ?? { kind: "preset", id: defaultTheme.id });
   if (!parsed.success) throw new UserFacingError("Choose a preset theme or describe a short original-show vibe.");
@@ -67,7 +87,7 @@ Begin with a scene whose id is "recap" and type is "recap". Its one recap prompt
       text: { format: zodTextFormat(episodeResponseSchema, "rerun_episode") },
     });
     if (!response.output_parsed) throw new Error("Live generation returned no structured episode.");
-    const rawEpisode = validateLiveEpisode(response.output_parsed, text);
+    const rawEpisode = validateLiveEpisode(repairCorrectRoutes(response.output_parsed), text);
     const episode = episodeSchema.parse({
       ...rawEpisode,
       // The player must be able to identify a server-generated episode without

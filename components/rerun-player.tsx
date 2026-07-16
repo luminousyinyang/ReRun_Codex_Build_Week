@@ -105,6 +105,20 @@ function findScene(episode: EpisodeSpec, id: string) {
   return episode.scenes.find((scene) => scene.id === id) ?? episode.scenes[0];
 }
 
+/** Older generated episodes could incorrectly aim a correct answer at their
+ * own retry branch. Recover by taking the next non-corrective story scene;
+ * new episodes are rejected server-side before this fallback is needed. */
+function correctDestination(episode: EpisodeSpec, current: Scene) {
+  const requested = current.beat?.onCorrect;
+  if (!requested) return current.next ?? current.id;
+  const target = episode.scenes.find((candidate) => candidate.id === requested);
+  if (target?.type !== "branch_outcome") return target?.id ?? requested;
+  const currentIndex = episode.scenes.findIndex((candidate) => candidate.id === current.id);
+  return episode.scenes.slice(currentIndex + 1).find((candidate) => candidate.type !== "branch_outcome")?.id
+    ?? target.next
+    ?? target.id;
+}
+
 function hashString(value: string) {
   let hash = 2166136261;
   for (let index = 0; index < value.length; index += 1) {
@@ -142,11 +156,11 @@ function waitForImage(url: string) {
   });
 }
 
-async function streamSceneArt(scene: Scene, theme: ShowTheme, referenceDataUrl: string | undefined, onImage: (url: string, isFinal: boolean) => void) {
+async function streamSceneArt(scene: Scene, theme: ShowTheme, onImage: (url: string, isFinal: boolean) => void) {
   const response = await fetch("/api/scene-image", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ scene: { id: scene.id, type: scene.type, background: scene.background }, theme, referenceDataUrl }),
+    body: JSON.stringify({ scene: { id: scene.id, type: scene.type, background: scene.background, visualMoment: scene.line ?? scene.deepDive ?? "" }, theme }),
   });
   if (!response.ok || !response.body) throw new Error("Scene art unavailable");
   const reader = response.body.getReader();
@@ -597,45 +611,33 @@ export function ReRunPlayer() {
     const candidates = episode.scenes.filter((candidate) => candidate.type !== "recap");
     const savedAt = savedAtByEpisodeId.current.get(episode.episodeId) ?? Date.now();
     const preflight = screen === "artwork";
-    const render = async (candidate: Scene, reference?: string) => streamSceneArt(candidate, episode.theme!, reference, (url, isFinal) => {
+    const render = async (candidate: Scene) => streamSceneArt(candidate, episode.theme!, (url, isFinal) => {
       if (cancelled) return;
       const nextVisuals = { ...visualsRef.current, [candidate.id]: url };
       visualsRef.current = nextVisuals;
       setVisuals(nextVisuals);
       // Keep only completed art for the seven-day replay cache. A partial is a
       // fast on-screen preview, not an asset we want to restore tomorrow.
-      if (isFinal) void saveLiveEpisodeArt(episode.episodeId, savedAt, nextVisuals).catch(() => undefined);
+      if (isFinal) void saveLiveEpisodeArt(episode.episodeId, candidate.id, savedAt, url).catch(() => undefined);
     });
     void (async () => {
       // Restore completed art before rendering anything. On a replay this keeps
       // the show visually intact immediately and avoids new image API calls.
-      const storedVisuals: Record<string, string> = await loadLiveEpisodeArt(episode.episodeId, GENERATED_EPISODE_TTL_MS).catch(() => ({}));
+      const storedVisuals: Record<string, string> = await loadLiveEpisodeArt(episode.episodeId, candidates.map((candidate) => candidate.id), GENERATED_EPISODE_TTL_MS).catch(() => ({}));
       if (cancelled) return;
       visualsRef.current = storedVisuals;
       setVisuals(storedVisuals);
       const cachedSceneIds = new Set(candidates.filter((candidate) => storedVisuals[candidate.id]).map((candidate) => candidate.id));
       setArtProgress({ ready: cachedSceneIds.size, total: candidates.length, failed: 0 });
 
-      let styleKey = candidates[0] ? storedVisuals[candidates[0].id] : undefined;
       let firstFailure: unknown;
       const queue = candidates.filter((candidate) => !storedVisuals[candidate.id]);
-      if (!styleKey && queue[0]) {
-        try {
-          styleKey = await render(queue.shift()!);
-          if (!cancelled) setArtProgress((current) => ({ ...current, ready: current.ready + 1 }));
-        } catch (error) {
-          // Continue without a reference plate. One failed render must not
-          // prevent the rest of a live episode from receiving new artwork.
-          firstFailure = error;
-          if (!cancelled) setArtProgress((current) => ({ ...current, failed: current.failed + 1 }));
-        }
-      }
-      await Promise.all(Array.from({ length: Math.min(2, queue.length) }, async () => {
+      await Promise.all(Array.from({ length: Math.min(ART_RENDER_CONCURRENCY, queue.length) }, async () => {
         while (queue.length) {
           const candidate = queue.shift();
           if (!candidate) continue;
           try {
-            await render(candidate, styleKey);
+            await render(candidate);
             if (!cancelled) setArtProgress((current) => ({ ...current, ready: current.ready + 1 }));
           } catch (error) {
             firstFailure ??= error;
@@ -852,7 +854,7 @@ export function ReRunPlayer() {
     }
 
     window.setTimeout(() => {
-      setSceneId(option.isCorrect ? scene.beat!.onCorrect : scene.beat!.onIncorrect);
+      setSceneId(option.isCorrect ? correctDestination(episode, scene) : scene.beat!.onIncorrect);
       setHostReaction(option.isCorrect ? "celebrate" : "retry");
       setRewindLevel(0);
       setPaused(false);
@@ -863,7 +865,7 @@ export function ReRunPlayer() {
 
   function continueWithAnswer() {
     if (!scene.beat || !answerRevealed) return;
-    setSceneId(scene.beat.onCorrect);
+    setSceneId(correctDestination(episode, scene));
     setRewindLevel(0);
     setBeatRevealed(false);
     setAnsweringOption(null);
@@ -949,8 +951,211 @@ export function ReRunPlayer() {
   );
 }
 
+function canonicalCut(episode: EpisodeSpec) {
+  const scenes: Scene[] = [];
+  const visited = new Set<string>();
+  let current = episode.scenes.find((scene) => scene.id === "recap")?.next;
+  while (current && !visited.has(current) && scenes.length < episode.scenes.length) {
+    const scene = findScene(episode, current);
+    visited.add(scene.id);
+    if (scene.type !== "branch_outcome") scenes.push(scene);
+    current = scene.beat?.onCorrect ?? scene.next ?? undefined;
+  }
+  return scenes;
+}
+
+function loadImage(source: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("A scene image could not be loaded for export."));
+    image.src = source;
+  });
+}
+
+function drawCover(context: CanvasRenderingContext2D, image: HTMLImageElement, width: number, height: number) {
+  const scale = Math.max(width / image.naturalWidth, height / image.naturalHeight);
+  const drawWidth = image.naturalWidth * scale;
+  const drawHeight = image.naturalHeight * scale;
+  context.drawImage(image, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+}
+
+function sceneNarration(scene: Scene) {
+  return scene.line ?? scene.beat?.question ?? "";
+}
+
+async function downloadGeneratedShowVideo(episode: EpisodeSpec, onProgress: (message: string) => void) {
+  const scenes = canonicalCut(episode);
+  const artwork = await loadLiveEpisodeArt(episode.episodeId, scenes.map((scene) => scene.id), GENERATED_EPISODE_TTL_MS);
+  if (scenes.some((scene) => !artwork[scene.id])) throw new Error("Finish illustrating this show before downloading its video.");
+
+  onProgress("Preparing video scenes…");
+  const [hostIdle, hostTalk, ...sceneImages] = await Promise.all([
+    loadImage("/assets/motion/professor-paws-flat-idle.png"),
+    loadImage("/assets/motion/professor-paws-flat-talk.png"),
+    ...scenes.map((scene) => loadImage(artwork[scene.id])),
+  ]);
+  const canvas = document.createElement("canvas");
+  // Render at 1080p while keeping the broadcast layout in a convenient 720p
+  // coordinate space. This avoids the soft host plate that resulted from
+  // recording a 720p canvas and then encoding it again as MP4.
+  const logicalWidth = 1280;
+  const logicalHeight = 720;
+  const renderScale = 1.5;
+  canvas.width = logicalWidth * renderScale;
+  canvas.height = logicalHeight * renderScale;
+  const context = canvas.getContext("2d");
+  if (!context || !canvas.captureStream || typeof MediaRecorder === "undefined") throw new Error("This browser cannot render a video export.");
+  context.setTransform(renderScale, 0, 0, renderScale, 0, 0);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+
+  const audioContext = new AudioContext();
+  const voiceTheme = episode.theme ?? defaultTheme;
+  onProgress("Generating narration track…");
+  const narration = await Promise.all(scenes.map(async (scene) => {
+    const response = await fetch("/api/tts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: sceneNarration(scene), voice: voiceTheme.voice, instructions: voiceTheme.voiceInstruction }),
+    });
+    if (!response.ok) return undefined;
+    return audioContext.decodeAudioData(await response.arrayBuffer());
+  }));
+  // Safari occasionally reports an invalid MP3 duration after decoding. Bound
+  // each beat by its caption length so one malformed audio header can never
+  // turn a one-minute episode into a multi-day video timeline.
+  const sceneDurations = narration.map((audio, index) => {
+    const estimated = Math.max(3_200, Math.min(8_500, sceneNarration(scenes[index]).length * 46 + 1_250));
+    const decoded = audio && Number.isFinite(audio.duration) && audio.duration > 0 && audio.duration < 20
+      ? audio.duration * 1_000 + 750
+      : estimated;
+    return Math.max(3_200, Math.min(8_500, decoded));
+  });
+  const sceneStarts = sceneDurations.reduce<number[]>((starts, duration) => [...starts, (starts.at(-1) ?? 0) + duration], [0]).slice(0, -1);
+  const totalDuration = sceneDurations.reduce((total, duration) => total + duration, 0);
+  const audioDestination = audioContext.createMediaStreamDestination();
+  const videoStream = canvas.captureStream(30);
+  const stream = new MediaStream([...videoStream.getVideoTracks(), ...audioDestination.stream.getAudioTracks()]);
+  // Safari's MP4 MediaRecorder path can emit corrupted duration metadata for a
+  // canvas stream. WebM preserves correct timestamps; MP4 remains a fallback
+  // only for browsers without WebM recording support.
+  const mimeType = ["video/webm;codecs=vp9", "video/webm", "video/mp4;codecs=avc1.42E01E"].find((candidate) => MediaRecorder.isTypeSupported(candidate)) ?? "";
+  const recorder = new MediaRecorder(stream, mimeType ? { mimeType, videoBitsPerSecond: 14_000_000 } : undefined);
+  const chunks: BlobPart[] = [];
+  recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+  const complete = new Promise<void>((resolve) => { recorder.onstop = () => resolve(); });
+  const startedAt = performance.now();
+
+  const paint = () => {
+    const elapsed = performance.now() - startedAt;
+    const activeIndex = sceneStarts.findIndex((start, candidate) => elapsed < start + sceneDurations[candidate]);
+    const index = activeIndex === -1 ? scenes.length - 1 : activeIndex;
+    const scene = scenes[index];
+    const image = sceneImages[index];
+    const sceneElapsed = Math.max(0, elapsed - sceneStarts[index]);
+    drawCover(context, image, logicalWidth, logicalHeight);
+    context.fillStyle = "rgba(0, 4, 15, .26)";
+    context.fillRect(0, 0, logicalWidth, logicalHeight);
+    context.fillStyle = "#33ff66";
+    context.font = "bold 34px monospace";
+    context.fillText(channelLabel(episode.channel), 40, 54);
+    context.textAlign = "right";
+    context.fillText("THE TOON BLOCK", logicalWidth - 40, 54);
+    context.textAlign = "left";
+    const hostHeight = 370;
+    const hostWidth = hostIdle.naturalWidth * (hostHeight / hostIdle.naturalHeight);
+    const hostX = 42;
+    const hostY = logicalHeight - hostHeight - 26;
+    const isSpeaking = Boolean(narration[index]);
+    // Match the player: the open-mouth plate is shown while the narration is
+    // active, with a small speaking nod so the exported host is not static.
+    const hostPlate = isSpeaking ? hostTalk : hostIdle;
+    const nod = isSpeaking ? Math.sin(sceneElapsed / 145) * 3.5 : Math.sin(sceneElapsed / 920) * 1.5;
+    const tilt = isSpeaking ? Math.sin(sceneElapsed / 285) * 0.012 : Math.sin(sceneElapsed / 1_200) * 0.003;
+    context.save();
+    context.translate(hostX + hostWidth / 2, hostY + hostHeight / 2 + nod);
+    context.rotate(tilt);
+    context.drawImage(hostPlate, -hostWidth / 2, -hostHeight / 2, hostWidth, hostHeight);
+    context.restore();
+    const caption = sceneNarration(scene);
+    context.fillStyle = "rgba(0,0,0,.82)";
+    context.fillRect(310, logicalHeight - 132, 900, 78);
+    context.fillStyle = "#fff5e5";
+    context.font = "31px sans-serif";
+    const words = caption.split(/\s+/);
+    let line = "";
+    let y = logicalHeight - 98;
+    for (const word of words) {
+      const next = `${line}${line ? " " : ""}${word}`;
+      if (context.measureText(next).width > 860 && line) { context.fillText(line, 334, y); line = word; y += 36; }
+      else line = next;
+    }
+    context.fillText(line, 334, y);
+    onProgress(`Rendering video ${index + 1}/${scenes.length}…`);
+    if (elapsed < totalDuration) requestAnimationFrame(paint);
+    else recorder.stop();
+  };
+
+  await audioContext.resume().catch(() => undefined);
+  const audioStart = audioContext.currentTime + 0.12;
+  narration.forEach((buffer, index) => {
+    if (!buffer) return;
+    const source = audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audioDestination);
+    source.start(audioStart + sceneStarts[index] / 1_000);
+    source.stop(audioStart + (sceneStarts[index] + sceneDurations[index]) / 1_000);
+  });
+  recorder.start(1_000);
+  requestAnimationFrame(paint);
+  await complete;
+  await audioContext.close();
+  onProgress("Encoding high-quality MP4…");
+  const intermediate = new Blob(chunks, { type: mimeType || "video/webm" });
+  const form = new FormData();
+  form.append("video", intermediate, "rerun-broadcast.webm");
+  const encodedResponse = await fetch("/api/video-export", { method: "POST", body: form });
+  if (!encodedResponse.ok) throw new Error((await encodedResponse.json().catch(() => ({ error: "MP4 encoding failed." }))).error);
+  const url = URL.createObjectURL(await encodedResponse.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${episode.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "rerun-show"}.mp4`;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+}
+
+function SavedEpisodeThumbnail({ episode }: { episode: EpisodeSpec }) {
+  const [thumbnail, setThumbnail] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const firstSceneId = canonicalCut(episode)[0]?.id;
+    if (!firstSceneId) return;
+    void loadLiveEpisodeArt(episode.episodeId, [firstSceneId], GENERATED_EPISODE_TTL_MS)
+      .then((artwork) => {
+        if (!cancelled) setThumbnail(artwork[firstSceneId] ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setThumbnail(null);
+      });
+    return () => { cancelled = true; };
+  }, [episode]);
+
+  return <span className="saved-episode-thumbnail">{thumbnail ? <img src={thumbnail} alt="" loading="lazy" /> : <span>YOUR<br />SHOW</span>}<i>REPLAY ▶</i></span>;
+}
+
 function HomeScreen({ onSelect, savedEpisodes, onSelectSaved, onGenerate }: { onSelect: (show: DemoShow) => void; savedEpisodes: EpisodeSpec[]; onSelectSaved: (episode: EpisodeSpec) => void; onGenerate: () => void }) {
-  return <div className="home-screen"><header className="home-marquee"><span className="home-brand">ReRun</span><span className="home-dial">TV GUIDE</span></header><div className="home-body"><p className="eyebrow">TONIGHT&apos;S LINEUP</p><h1>Pick a show, or make your own.</h1><div className="lineup">{demoShows.map((show) => <button key={show.id} type="button" className="lineup-card" style={{ "--show-primary": show.theme.palette[1], "--show-accent": show.theme.palette[3] ?? show.theme.palette[0] } as CSSProperties} onClick={() => onSelect(show)}><span className="lineup-art"><img src={show.art.teaching} alt="" loading="lazy" /><i className="lineup-topic">{show.topic}</i></span><span className="lineup-meta"><b>{show.title}</b><small>{channelLabel(show.episode.channel)} · {show.theme.name}</small></span><span className="lineup-badge">WATCH ▶</span></button>)}</div>{savedEpisodes.length > 0 && <section className="home-saved"><p className="eyebrow">YOUR RECENT EPISODES · SAVED FOR 7 DAYS</p><div className="lineup">{savedEpisodes.map((savedEpisode) => <button key={savedEpisode.episodeId} type="button" className="lineup-card saved-episode-card" onClick={() => onSelectSaved(savedEpisode)}><span className="saved-episode-mark">REPLAY</span><span className="lineup-meta"><b>{savedEpisode.title}</b><small>{channelLabel(savedEpisode.channel)} · Your generated show</small></span><span className="lineup-badge">WATCH ▶</span></button>)}</div></section>}<div className="home-create"><p className="eyebrow">OR PUT YOUR OWN NOTES ON AIR</p><button type="button" className="primary home-generate" onClick={onGenerate}>＋ Generate an episode from your notes — PDFs, slides, photos, and recordings welcome</button></div><p className="quiet">Five themed demo shows need no API key. Live generation is optional.</p></div></div>;
+  const [exportingId, setExportingId] = useState<string | null>(null);
+  const [exportStatus, setExportStatus] = useState("");
+  const exportShow = async (episode: EpisodeSpec) => {
+    setExportingId(episode.episodeId);
+    setExportStatus("Preparing video…");
+    try { await downloadGeneratedShowVideo(episode, setExportStatus); setExportStatus("Video downloaded."); }
+    catch (error) { setExportStatus(error instanceof Error ? error.message : "Video export could not start."); }
+    finally { setExportingId(null); }
+  };
+  return <div className="home-screen"><header className="home-marquee"><span className="home-brand">ReRun</span><span className="home-dial">TV GUIDE</span></header><div className="home-body"><p className="eyebrow">TONIGHT&apos;S LINEUP</p><h1>Pick a show, or make your own.</h1><div className="lineup">{demoShows.map((show) => <button key={show.id} type="button" className="lineup-card" style={{ "--show-primary": show.theme.palette[1], "--show-accent": show.theme.palette[3] ?? show.theme.palette[0] } as CSSProperties} onClick={() => onSelect(show)}><span className="lineup-art"><img src={show.art.teaching} alt="" loading="lazy" /><i className="lineup-topic">{show.topic}</i></span><span className="lineup-meta"><b>{show.title}</b><small>{channelLabel(show.episode.channel)} · {show.theme.name}</small></span><span className="lineup-badge">WATCH ▶</span></button>)}</div>{savedEpisodes.length > 0 && <section className="home-saved"><p className="eyebrow">YOUR RECENT EPISODES · SAVED FOR 7 DAYS</p><div className="lineup">{savedEpisodes.map((savedEpisode) => <div key={savedEpisode.episodeId} className="saved-episode-entry"><button type="button" className="lineup-card saved-episode-card" onClick={() => onSelectSaved(savedEpisode)}><SavedEpisodeThumbnail episode={savedEpisode} /><span className="lineup-meta"><b>{savedEpisode.title}</b><small>{channelLabel(savedEpisode.channel)} · Your generated show</small></span><span className="lineup-badge">WATCH ▶</span></button><button type="button" className="saved-download" disabled={exportingId !== null} onClick={() => void exportShow(savedEpisode)}>{exportingId === savedEpisode.episodeId ? exportStatus : "⇩ Download video"}</button></div>)}</div>{exportStatus && <p className="video-export-status" role="status">{exportStatus}</p>}</section>}<div className="home-create"><p className="eyebrow">OR PUT YOUR OWN NOTES ON AIR</p><button type="button" className="primary home-generate" onClick={onGenerate}>＋ Generate an episode from your notes — PDFs, slides, photos, and recordings welcome</button></div><p className="quiet">Five themed demo shows need no API key. Live generation is optional.</p></div></div>;
 }
 
 function ScreenHeader({ channel, right, action }: { channel: number; right: string; action?: { label: string; onClick: () => void } }) {

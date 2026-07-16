@@ -1,16 +1,25 @@
 const DATABASE_NAME = "rerun-live-episode-art";
-const STORE_NAME = "episodes";
+const DATABASE_VERSION = 2;
+const STORE_NAME = "scene-assets";
 
-type ArtRecord = {
+type SceneAsset = {
+  key: string;
   episodeId: string;
+  sceneId: string;
   savedAt: number;
-  visuals: Record<string, string>;
+  dataUrl: string;
 };
+
+function keyFor(episodeId: string, sceneId: string) {
+  return `${episodeId}:${sceneId}`;
+}
 
 function openDatabase() {
   return new Promise<IDBDatabase>((resolve, reject) => {
-    const request = window.indexedDB.open(DATABASE_NAME, 1);
-    request.onupgradeneeded = () => request.result.createObjectStore(STORE_NAME, { keyPath: "episodeId" });
+    const request = window.indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(STORE_NAME)) request.result.createObjectStore(STORE_NAME, { keyPath: "key" });
+    };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
@@ -23,36 +32,24 @@ function requestValue<T>(request: IDBRequest<T>) {
   });
 }
 
-/** Scene data URLs live in IndexedDB rather than localStorage: a full episode
- * exceeds the small localStorage quota, while IndexedDB can safely preserve
- * the 7-day replay's original artwork. */
-export async function loadLiveEpisodeArt(episodeId: string, maxAgeMs: number) {
+/** One durable Safari IndexedDB record per completed scene. Unlike the old
+ * episode-sized record, concurrent completions cannot overwrite each other. */
+export async function loadLiveEpisodeArt(episodeId: string, sceneIds: string[], maxAgeMs: number) {
   const database = await openDatabase();
   try {
-    const transaction = database.transaction(STORE_NAME, "readwrite");
-    const store = transaction.objectStore(STORE_NAME);
-    const record = await requestValue(store.get(episodeId)) as ArtRecord | undefined;
-    if (!record || Date.now() - record.savedAt <= maxAgeMs) return record?.visuals ?? {};
-    await requestValue(store.delete(episodeId));
-    return {};
+    const store = database.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME);
+    const records = await Promise.all(sceneIds.map((sceneId) => requestValue(store.get(keyFor(episodeId, sceneId)) as IDBRequest<SceneAsset | undefined>)));
+    return Object.fromEntries(records.flatMap((record) => record && Date.now() - record.savedAt <= maxAgeMs ? [[record.sceneId, record.dataUrl]] : []));
   } finally {
     database.close();
   }
 }
 
-export async function saveLiveEpisodeArt(episodeId: string, savedAt: number, visuals: Record<string, string>) {
+export async function saveLiveEpisodeArt(episodeId: string, sceneId: string, savedAt: number, dataUrl: string) {
   const database = await openDatabase();
   try {
-    const transaction = database.transaction(STORE_NAME, "readwrite");
-    const store = transaction.objectStore(STORE_NAME);
-    // Final renders complete concurrently. Merge with the latest record in the
-    // same transaction so a slower scene can never overwrite faster scenes.
-    const existing = await requestValue(store.get(episodeId)) as ArtRecord | undefined;
-    await requestValue(store.put({
-      episodeId,
-      savedAt: existing?.savedAt ?? savedAt,
-      visuals: { ...existing?.visuals, ...visuals },
-    } satisfies ArtRecord));
+    const store = database.transaction(STORE_NAME, "readwrite").objectStore(STORE_NAME);
+    await requestValue(store.put({ key: keyFor(episodeId, sceneId), episodeId, sceneId, savedAt, dataUrl } satisfies SceneAsset));
   } finally {
     database.close();
   }
