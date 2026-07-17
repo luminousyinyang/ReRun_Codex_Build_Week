@@ -29,6 +29,35 @@ npm run dev
 
 Open `http://localhost:3000`. No `.env` file is needed for the bundled demo. Add `OPENAI_API_KEY` only for live generation, extraction, narration, or scene art.
 
+## Environment variables
+
+Create a local `.env` file only if you want the live AI features. The bundled
+demo needs none of these variables.
+
+```bash
+# Required for every live OpenAI feature. Keep this server-only; never use a
+# NEXT_PUBLIC_ prefix for it.
+OPENAI_API_KEY=sk-...
+
+# Optional model overrides
+OPENAI_MODEL=gpt-5.6
+OPENAI_INGEST_MODEL=gpt-4.1-mini
+OPENAI_IMAGE_MODEL=gpt-image-2
+OPENAI_TTS_MODEL=gpt-4o-mini-tts
+OPENAI_TRANSCRIBE_MODEL=gpt-4o-mini-transcribe
+
+# Optional: path to ffmpeg for MP4 conversion during browser video export.
+# Omit it when ffmpeg is already on PATH.
+FFMPEG_PATH=/usr/local/bin/ffmpeg
+```
+
+`OPENAI_API_KEY` enables live episode generation, document/image/audio
+extraction, narration, and scene art. The other OpenAI variables are optional
+overrides; leave them unset to use the defaults shown above. For Netlify,
+add the same variables in **Project configuration → Environment variables**
+and redeploy. Do not commit `.env` or expose the API key in a browser-facing
+`NEXT_PUBLIC_*` variable.
+
 ## Verification
 
 ```bash
