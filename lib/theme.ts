@@ -115,16 +115,9 @@ export function getPresetTheme(id: string) {
 
 /** Saved shows from before themed narration may not carry a theme at all. Do
  * not turn those legacy shows into the default android presenter: use a warm,
- * natural host instead. The retro-sci-fi show remains dry and curious, but its
- * narration should still sound human rather than like a voice synthesizer. */
+ * natural host instead. */
 export function narrationThemeFor(theme?: ShowTheme) {
-  const resolved = theme ?? naturalNarrationFallback;
-  if (resolved.id !== "retro-sci-fi") return resolved;
-  return {
-    ...resolved,
-    voice: "coral" as const,
-    voiceInstruction: "Deliver a warm, natural human retro-future broadcast. Sound dryly curious and confident, with clear classroom pacing and small pauses for discovery. Never sound robotic, synthetic, monotone, or digitally distorted.",
-  };
+  return theme ?? naturalNarrationFallback;
 }
 
 /**
