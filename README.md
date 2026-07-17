@@ -22,6 +22,8 @@ Saved generated episodes appear in **Your recent episodes** for seven days. Afte
 
 ## Run locally
 
+Prerequisite: Node.js 18.18 or later (Node.js 20 LTS recommended).
+
 ```bash
 npm install
 npm run dev
@@ -72,7 +74,7 @@ ReRun was built in one week for OpenAI Build Week, pair-programmed with Codex th
 
 **How we collaborated with Codex.** We worked contract-first: architecture, the EpisodeSpec schema, scene-authoring rules, and the test plan were drafted on day one as a build contract, and Codex implemented against them. Every milestone was human-reviewed before it was logged, with the verification performed (typecheck, tests, production build, browser checks) recorded per entry.
 
-**Where Codex accelerated the workflow.** Codex implemented the working core: the CRT player (a ~1,200-line React state machine covering shots, question takeovers, branch reactions, and reduced-motion support), the ~600-line Zod EpisodeSpec validator, the branching beat engine, all five API routes (episode, ingest, scene-image, TTS, video export), the demo-audio prerender pipeline, and the 25-test suite. The complete P0 interactive player — boot flow, recap, branching, commercial review, remote, responsive UI — shipped on the first build day, and the CRT viewport and framing went through three logged rework passes in the two days after.
+**Where Codex accelerated the workflow.** Codex turned the day-one build contract into an integrated vertical slice: the CRT player (a ~1,200-line React state machine covering shots, question takeovers, branch reactions, and reduced-motion support), the ~600-line Zod EpisodeSpec validator, the branching beat engine, all five API routes (episode, ingest, scene-image, TTS, video export), the demo-audio prerender pipeline, and the 25-test suite. That meant the complete P0 loop — boot flow, recap, branching, commercial review, remote, and responsive UI — was runnable on the first build day. It also shortened iteration: Codex carried out three focused CRT framing and viewport rework passes over the next two days while we repeatedly typechecked, built, and browser-tested the product. Once we chose a no-key judge path, Codex implemented the offline catalog, deterministic option shuffle, audio manifest, and media fallbacks that made the decision real.
 
 **Key product, engineering, and design decisions were ours.** A judge-first MVP scope; bundling all 46 MB of original media (268 narration MP3s, 32 art plates) so the full demo needs no key and no network; the original-art-only guardrail in every image prompt; teach-before-ask enforced as a schema requirement rather than a prompt suggestion; and the positioning against passive audio study formats. Codex executed these decisions; it did not make them.
 
