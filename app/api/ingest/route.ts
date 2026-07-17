@@ -1,6 +1,6 @@
 import OpenAI, { toFile } from "openai";
 import { NextResponse } from "next/server";
-import { MAX_AUDIO_VIDEO_BYTES, MAX_STUDY_CHARS, MAX_UPLOAD_FILES, MIN_STUDY_CHARS } from "@/lib/limits";
+import { MAX_AUDIO_VIDEO_BYTES, MAX_STUDY_CHARS, MAX_UPLOAD_BYTES, MAX_UPLOAD_FILES, MIN_STUDY_CHARS } from "@/lib/limits";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -10,6 +10,8 @@ const DOCUMENT = /\.(pdf|docx|pptx|csv)$/i;
 const IMAGE = /\.(png|jpe?g|webp|gif)$/i;
 const AUDIO_VIDEO = /\.(mp3|mp4|mpeg|mpga|m4a|wav|webm)$/i;
 const MOV = /\.mov$/i;
+const PDF = /\.pdf$/i;
+const ingestModel = process.env.OPENAI_INGEST_MODEL || "gpt-4.1-mini";
 
 class IngestError extends Error {}
 
@@ -23,13 +25,14 @@ function dataUrl(file: File) {
 
 async function extractWithResponses(client: OpenAI, file: File, kind: "document" | "image") {
   const instruction = kind === "image"
-    ? "Read this study image carefully. Transcribe every legible educational detail, including labels, definitions, formulas, examples, and diagrams in concise plain text."
-    : "Extract the educational study material from this file. Preserve distinct concepts, definitions, formulas, examples, labels, and relationships in concise plain text.";
+    ? "Read this study image carefully. Return concise plain study notes with every legible educational detail, including labels, definitions, formulas, examples, and diagrams. Keep the result under 8,000 characters."
+    : "Extract concise plain study notes from this file. Preserve distinct concepts, definitions, formulas, examples, labels, and relationships. Keep the result under 8,000 characters; omit filler and repeated material.";
   const content = kind === "image"
     ? [{ type: "input_text", text: instruction }, { type: "input_image", image_url: await dataUrl(file), detail: "high" }]
-    : [{ type: "input_text", text: instruction }, { type: "input_file", filename: file.name, file_data: await dataUrl(file) }];
+    : [{ type: "input_text", text: instruction }, { type: "input_file", filename: file.name, file_data: await dataUrl(file), ...(PDF.test(file.name) ? { detail: "low" } : {}) }];
   const response = await client.responses.create({
-    model: process.env.OPENAI_MODEL || "gpt-5.6",
+    model: ingestModel,
+    max_output_tokens: 1_800,
     input: [{ role: "user", content }],
   } as never);
   return response.output_text.trim();
@@ -60,7 +63,8 @@ async function condense(client: OpenAI | null, text: string) {
   if (!client) return { text: text.slice(0, MAX_STUDY_CHARS), condensed: false, notice: "The pasted material was trimmed to 12,000 characters." };
   try {
     const response = await client.responses.create({
-      model: process.env.OPENAI_MODEL || "gpt-5.6",
+      model: ingestModel,
+      max_output_tokens: 1_800,
       input: `Condense these study notes to at most ${MAX_STUDY_CHARS} characters. Keep every distinct concept, definition, formula, example, and relationship. Write plain study notes only.\n\n${text}`,
     });
     return { text: response.output_text.trim().slice(0, MAX_STUDY_CHARS), condensed: true };
@@ -75,8 +79,9 @@ export async function POST(request: Request) {
     const files = form.getAll("files").filter((value): value is File => value instanceof File && value.size > 0);
     if (!files.length) throw new IngestError("Add at least one file to read.");
     if (files.length > MAX_UPLOAD_FILES) throw new IngestError(`Add up to ${MAX_UPLOAD_FILES} files at a time.`);
+    if (files.reduce((total, file) => total + file.size, 0) > MAX_UPLOAD_BYTES) throw new IngestError("Files must total 4 MB or less for the hosted reader. Try one smaller file or paste the text notes.");
     const needsApi = files.some((file) => !PLAIN.test(file.name));
-    const client = needsApi && process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
+    const client = needsApi && process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 22_000, maxRetries: 0 }) : null;
     const extracted = await Promise.all(files.map(async (file) => ({ name: file.name, text: await extractFile(client, file) })));
     const joined = extracted.map(({ name, text }) => `# ${name}\n${text.trim()}`).filter((entry) => entry.length > 4).join("\n\n").trim();
     if (joined.length < MIN_STUDY_CHARS) throw new IngestError("Those files didn't contain enough readable study material. Add notes or a clearer recording.");
@@ -85,6 +90,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ sourceText: result.text, manifest: extracted.map(({ name, text }) => ({ name, characters: text.length })), condensed: result.condensed, notice: result.notice });
   } catch (error) {
     if (error instanceof IngestError) return NextResponse.json({ error: error.message }, { status: 422 });
+    if (error instanceof Error && (/timed? out/i.test(error.message) || error.name === "APIConnectionTimeoutError")) {
+      return NextResponse.json({ error: "This file took too long to read. Try a smaller file, or paste its text notes instead." }, { status: 422 });
+    }
     console.error("ingest-failed", error instanceof Error ? error.message : "unknown-error");
     return NextResponse.json({ error: "We couldn't read that file right now. Paste text notes instead." }, { status: 502 });
   }

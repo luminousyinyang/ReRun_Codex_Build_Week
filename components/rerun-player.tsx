@@ -5,7 +5,7 @@ import { demoEpisode, demoShows, episodeSchema, type DemoShow, type EpisodeSpec,
 import { SceneIllustration } from "@/components/scene-illustration";
 import { defaultTheme, narrationThemeFor, showThemePresets, type ShowTheme, type ThemeInput } from "@/lib/theme";
 import { bundledDemoAudioFile } from "@/lib/demo-audio-manifest";
-import { MAX_STUDY_CHARS, MIN_STUDY_CHARS } from "@/lib/limits";
+import { MAX_STUDY_CHARS, MAX_UPLOAD_BYTES, MIN_STUDY_CHARS } from "@/lib/limits";
 import { loadLiveEpisodeArt, saveLiveEpisodeArt } from "@/lib/live-art-cache";
 
 type Screen = "off" | "boot" | "static" | "home" | "ingest" | "standby" | "artwork" | "recap" | "episode" | "guide";
@@ -891,6 +891,10 @@ export function ReRunPlayer() {
   async function ingestFiles(files: FileList | File[]) {
     const selected = Array.from(files);
     if (!selected.length) return;
+    if (selected.reduce((total, file) => total + file.size, 0) > MAX_UPLOAD_BYTES) {
+      setNotice("Files must total 4 MB or less for the hosted reader. Try one smaller file or paste the text notes.");
+      return;
+    }
     const unsupportedMov = selected.find((file) => /\.mov$/i.test(file.name));
     if (unsupportedMov) {
       setNotice(`${unsupportedMov.name} is a .mov file. Export it as mp4 or webm, then try again.`);

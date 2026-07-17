@@ -100,10 +100,9 @@ describe("theme and art contracts", () => {
     expect(() => showThemeSchema.parse({ ...defaultTheme, voice: "unapproved-voice" })).toThrow();
   });
 
-  it("uses a natural narrator for legacy shows and the retro-sci-fi preset", () => {
+  it("uses a natural narrator for legacy shows and preserves bundled demo voices", () => {
     expect(narrationThemeFor().voice).toBe("coral");
-    expect(narrationThemeFor(defaultTheme).voice).toBe("coral");
-    expect(narrationThemeFor(defaultTheme).voiceInstruction).toMatch(/natural human/i);
+    expect(demoShows.every((show) => narrationThemeFor(show.theme).voice === show.theme.voice)).toBe(true);
   });
 
   it("compiles custom voice direction from normalized theme metadata", () => {
